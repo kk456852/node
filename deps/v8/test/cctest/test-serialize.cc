@@ -49,11 +49,11 @@
 #include "src/objects/objects-inl.h"
 #include "src/runtime/runtime.h"
 #include "src/snapshot/code-serializer.h"
-#include "src/snapshot/natives.h"
 #include "src/snapshot/partial-deserializer.h"
 #include "src/snapshot/partial-serializer.h"
 #include "src/snapshot/read-only-deserializer.h"
 #include "src/snapshot/read-only-serializer.h"
+#include "src/snapshot/snapshot-compression.h"
 #include "src/snapshot/snapshot.h"
 #include "src/snapshot/startup-deserializer.h"
 #include "src/snapshot/startup-serializer.h"
@@ -413,6 +413,24 @@ static void PartiallySerializeContext(Vector<const byte>* startup_blob_out,
   }
   v8_isolate->Dispose();
   ReadOnlyHeap::ClearSharedHeapForTest();
+}
+
+UNINITIALIZED_TEST(SnapshotCompression) {
+  DisableAlwaysOpt();
+  Vector<const byte> startup_blob;
+  Vector<const byte> read_only_blob;
+  Vector<const byte> partial_blob;
+  PartiallySerializeContext(&startup_blob, &read_only_blob, &partial_blob);
+  SnapshotData original_snapshot_data(partial_blob);
+  SnapshotData compressed =
+      i::SnapshotCompression::Compress(&original_snapshot_data);
+  SnapshotData decompressed =
+      i::SnapshotCompression::Decompress(compressed.RawData());
+  CHECK_EQ(partial_blob, decompressed.RawData());
+
+  startup_blob.Dispose();
+  read_only_blob.Dispose();
+  partial_blob.Dispose();
 }
 
 UNINITIALIZED_TEST(PartialSerializerContext) {
@@ -2456,8 +2474,10 @@ TEST(CodeSerializerBitFlip) {
   const char* source = "function f() { return 'abc'; }; f() + 'def'";
   v8::ScriptCompiler::CachedData* cache = CompileRunAndProduceCache(source);
 
-  // Random bit flip.
-  const_cast<uint8_t*>(cache->data)[337] ^= 0x40;
+  // Arbitrary bit flip.
+  int arbitrary_spot = 337;
+  CHECK_LT(arbitrary_spot, cache->length);
+  const_cast<uint8_t*>(cache->data)[arbitrary_spot] ^= 0x40;
 
   v8::Isolate::CreateParams create_params;
   create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
@@ -3176,8 +3196,8 @@ UNINITIALIZED_TEST(SnapshotCreatorTemplates) {
                creator.AddContext(context, v8::SerializeInternalFieldsCallback(
                                                SerializeInternalFields,
                                                reinterpret_cast<void*>(2000))));
-      CHECK_EQ(0u, creator.AddTemplate(callback));
-      CHECK_EQ(1u, creator.AddTemplate(global_template));
+      CHECK_EQ(0u, creator.AddData(callback));
+      CHECK_EQ(1u, creator.AddData(global_template));
     }
     blob =
         creator.CreateBlob(v8::SnapshotCreator::FunctionCodeHandling::kClear);
@@ -3212,7 +3232,8 @@ UNINITIALIZED_TEST(SnapshotCreatorTemplates) {
 
         // Retrieve the snapshotted object template.
         v8::Local<v8::ObjectTemplate> obj_template =
-            v8::ObjectTemplate::FromSnapshot(isolate, 1).ToLocalChecked();
+            isolate->GetDataFromSnapshotOnce<v8::ObjectTemplate>(1)
+                .ToLocalChecked();
         CHECK(!obj_template.IsEmpty());
         v8::Local<v8::Object> object =
             obj_template->NewInstance(context).ToLocalChecked();
@@ -3224,7 +3245,8 @@ UNINITIALIZED_TEST(SnapshotCreatorTemplates) {
 
         // Retrieve the snapshotted function template.
         v8::Local<v8::FunctionTemplate> fun_template =
-            v8::FunctionTemplate::FromSnapshot(isolate, 0).ToLocalChecked();
+            isolate->GetDataFromSnapshotOnce<v8::FunctionTemplate>(0)
+                .ToLocalChecked();
         CHECK(!fun_template.IsEmpty());
         v8::Local<v8::Function> fun =
             fun_template->GetFunction(context).ToLocalChecked();
@@ -3270,9 +3292,11 @@ UNINITIALIZED_TEST(SnapshotCreatorTemplates) {
                  v8::Local<v8::External>::Cast(b2)->Value());
         CHECK(c2->IsInt32() && c2->Int32Value(context).FromJust() == 35);
 
-        // Accessing out of bound returns empty MaybeHandle.
-        CHECK(v8::ObjectTemplate::FromSnapshot(isolate, 2).IsEmpty());
-        CHECK(v8::FunctionTemplate::FromSnapshot(isolate, 2).IsEmpty());
+        // Calling GetDataFromSnapshotOnce again returns an empty MaybeLocal.
+        CHECK(
+            isolate->GetDataFromSnapshotOnce<v8::ObjectTemplate>(1).IsEmpty());
+        CHECK(isolate->GetDataFromSnapshotOnce<v8::FunctionTemplate>(0)
+                  .IsEmpty());
         CHECK(v8::Context::FromSnapshot(isolate, 1).IsEmpty());
 
         for (auto data : deserialized_data) delete data;
@@ -3984,6 +4008,54 @@ UNINITIALIZED_TEST(SnapshotCreatorAnonClassWithKeep) {
           "function Foo() { return class {}; } \n"
           "class Bar extends Foo() {}\n"
           "Foo()\n");
+      creator.SetDefaultContext(context);
+    }
+  }
+  v8::StartupData blob =
+      creator.CreateBlob(v8::SnapshotCreator::FunctionCodeHandling::kKeep);
+
+  delete[] blob.data;
+}
+
+class DisableLazySourcePositionScope {
+ public:
+  DisableLazySourcePositionScope()
+      : backup_value_(FLAG_enable_lazy_source_positions) {
+    FLAG_enable_lazy_source_positions = false;
+  }
+  ~DisableLazySourcePositionScope() {
+    FLAG_enable_lazy_source_positions = backup_value_;
+  }
+
+ private:
+  bool backup_value_;
+};
+
+UNINITIALIZED_TEST(NoStackFrameCacheSerialization) {
+  // Checks that exceptions caught are not cached in the
+  // stack frame cache during serialization. The individual frames
+  // can point to JSFunction objects, which need to be stored in a
+  // context snapshot, *not* isolate snapshot.
+  DisableAlwaysOpt();
+  DisableLazySourcePositionScope lazy_scope;
+
+  v8::SnapshotCreator creator;
+  v8::Isolate* isolate = creator.GetIsolate();
+  isolate->SetCaptureStackTraceForUncaughtExceptions(true);
+  {
+    v8::HandleScope handle_scope(isolate);
+    {
+      v8::Local<v8::Context> context = v8::Context::New(isolate);
+      v8::Context::Scope context_scope(context);
+      v8::TryCatch try_catch(isolate);
+      CompileRun(R"(
+        function foo() { throw new Error('bar'); }
+        function bar() {
+          foo();
+        }
+        bar();
+      )");
+
       creator.SetDefaultContext(context);
     }
   }
