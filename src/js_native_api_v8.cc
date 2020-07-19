@@ -267,7 +267,8 @@ class RefBase : protected Finalizer, RefTracker {
  protected:
   inline void Finalize(bool is_env_teardown = false) override {
     if (_finalize_callback != nullptr) {
-      _env->CallIntoModuleThrow([&](napi_env env) {
+      v8::HandleScope handle_scope(_env->isolate);
+      _env->CallIntoModule([&](napi_env env) {
         _finalize_callback(
             env,
             _finalize_data,
@@ -369,37 +370,6 @@ class Reference : public RefBase {
   }
 
   v8impl::Persistent<v8::Value> _persistent;
-};
-
-class ArrayBufferReference final : public Reference {
- public:
-  // Same signatures for ctor and New() as Reference, except this only works
-  // with ArrayBuffers:
-  template <typename... Args>
-  explicit ArrayBufferReference(napi_env env,
-                                v8::Local<v8::ArrayBuffer> value,
-                                Args&&... args)
-    : Reference(env, value, std::forward<Args>(args)...) {}
-
-  template <typename... Args>
-  static ArrayBufferReference* New(napi_env env,
-                                   v8::Local<v8::ArrayBuffer> value,
-                                   Args&&... args) {
-    return new ArrayBufferReference(env, value, std::forward<Args>(args)...);
-  }
-
- private:
-  inline void Finalize(bool is_env_teardown) override {
-    if (is_env_teardown) {
-      v8::HandleScope handle_scope(_env->isolate);
-      v8::Local<v8::Value> ab = Get();
-      CHECK(!ab.IsEmpty());
-      CHECK(ab->IsArrayBuffer());
-      ab.As<v8::ArrayBuffer>()->Detach();
-    }
-
-    Reference::Finalize(is_env_teardown);
-  }
 };
 
 enum UnwrapAction {
@@ -506,7 +476,7 @@ class CallbackWrapperBase : public CallbackWrapper {
     napi_callback cb = _bundle->*FunctionField;
 
     napi_value result;
-    env->CallIntoModuleThrow([&](napi_env env) {
+    env->CallIntoModule([&](napi_env env) {
       result = cb(env, cbinfo_wrapper);
     });
 
@@ -740,6 +710,7 @@ const char* error_messages[] = {nullptr,
                                 "A date was expected",
                                 "An arraybuffer was expected",
                                 "A detachable arraybuffer was expected",
+                                "Main thread would deadlock",
 };
 
 napi_status napi_get_last_error_info(napi_env env,
@@ -751,7 +722,7 @@ napi_status napi_get_last_error_info(napi_env env,
   // message in the `napi_status` enum each time a new error message is added.
   // We don't have a napi_status_last as this would result in an ABI
   // change each time a message was added.
-  const int last_status = napi_detachable_arraybuffer_expected;
+  const int last_status = napi_would_deadlock;
 
   static_assert(
       NAPI_ARRAYSIZE(error_messages) == last_status + 1,
@@ -2207,7 +2178,7 @@ napi_status napi_get_value_string_latin1(napi_env env,
   if (!buf) {
     CHECK_ARG(env, result);
     *result = val.As<v8::String>()->Length();
-  } else {
+  } else if (bufsize != 0) {
     int copied =
         val.As<v8::String>()->WriteOneByte(env->isolate,
                                            reinterpret_cast<uint8_t*>(buf),
@@ -2219,6 +2190,8 @@ napi_status napi_get_value_string_latin1(napi_env env,
     if (result != nullptr) {
       *result = copied;
     }
+  } else if (result != nullptr) {
+    *result = 0;
   }
 
   return napi_clear_last_error(env);
@@ -2246,7 +2219,7 @@ napi_status napi_get_value_string_utf8(napi_env env,
   if (!buf) {
     CHECK_ARG(env, result);
     *result = val.As<v8::String>()->Utf8Length(env->isolate);
-  } else {
+  } else if (bufsize != 0) {
     int copied = val.As<v8::String>()->WriteUtf8(
         env->isolate,
         buf,
@@ -2258,6 +2231,8 @@ napi_status napi_get_value_string_utf8(napi_env env,
     if (result != nullptr) {
       *result = copied;
     }
+  } else if (result != nullptr) {
+    *result = 0;
   }
 
   return napi_clear_last_error(env);
@@ -2286,7 +2261,7 @@ napi_status napi_get_value_string_utf16(napi_env env,
     CHECK_ARG(env, result);
     // V8 assumes UTF-16 length is the same as the number of characters.
     *result = val.As<v8::String>()->Length();
-  } else {
+  } else if (bufsize != 0) {
     int copied = val.As<v8::String>()->Write(env->isolate,
                                              reinterpret_cast<uint16_t*>(buf),
                                              0,
@@ -2297,6 +2272,8 @@ napi_status napi_get_value_string_utf16(napi_env env,
     if (result != nullptr) {
       *result = copied;
     }
+  } else if (result != nullptr) {
+    *result = 0;
   }
 
   return napi_clear_last_error(env);
@@ -2707,40 +2684,27 @@ napi_status napi_create_external_arraybuffer(napi_env env,
                                              napi_finalize finalize_cb,
                                              void* finalize_hint,
                                              napi_value* result) {
-  NAPI_PREAMBLE(env);
-  CHECK_ARG(env, result);
-
-  v8::Isolate* isolate = env->isolate;
-  // The buffer will be freed with v8impl::ArrayBufferReference::New()
-  // below, hence this BackingStore does not need to free the buffer.
-  std::unique_ptr<v8::BackingStore> backing =
-      v8::ArrayBuffer::NewBackingStore(external_data,
-                                       byte_length,
-                                       [](void*, size_t, void*){},
-                                       nullptr);
-  v8::Local<v8::ArrayBuffer> buffer =
-      v8::ArrayBuffer::New(isolate, std::move(backing));
-  // TODO(thangktran): drop this check when V8 is pumped to 8.0 .
-  if (!buffer->IsExternal())
-    buffer->Externalize(buffer->GetBackingStore());
-  v8::Maybe<bool> marked = env->mark_arraybuffer_as_untransferable(buffer);
-  CHECK_MAYBE_NOTHING(env, marked, napi_generic_failure);
-
-  if (finalize_cb != nullptr) {
-    // Create a self-deleting weak reference that invokes the finalizer
-    // callback and detaches the ArrayBuffer if it still exists on Environment
-    // teardown.
-    v8impl::ArrayBufferReference::New(env,
-        buffer,
-        0,
-        true,
-        finalize_cb,
-        external_data,
-        finalize_hint);
-  }
-
-  *result = v8impl::JsValueFromV8LocalValue(buffer);
-  return GET_RETURN_STATUS(env);
+  // The API contract here is that the cleanup function runs on the JS thread,
+  // and is able to use napi_env. Implementing that properly is hard, so use the
+  // `Buffer` variant for easier implementation.
+  napi_value buffer;
+  napi_status status;
+  status = napi_create_external_buffer(
+      env,
+      byte_length,
+      external_data,
+      finalize_cb,
+      finalize_hint,
+      &buffer);
+  if (status != napi_ok) return status;
+  return napi_get_typedarray_info(
+      env,
+      buffer,
+      nullptr,
+      nullptr,
+      nullptr,
+      result,
+      nullptr);
 }
 
 napi_status napi_get_arraybuffer_info(napi_env env,
@@ -3184,9 +3148,6 @@ napi_status napi_detach_arraybuffer(napi_env env, napi_value arraybuffer) {
       env, value->IsArrayBuffer(), napi_arraybuffer_expected);
 
   v8::Local<v8::ArrayBuffer> it = value.As<v8::ArrayBuffer>();
-  // TODO(addaleax): Remove the first condition once we have V8 8.0.
-  RETURN_STATUS_IF_FALSE(
-      env, it->IsExternal(), napi_detachable_arraybuffer_expected);
   RETURN_STATUS_IF_FALSE(
       env, it->IsDetachable(), napi_detachable_arraybuffer_expected);
 

@@ -109,9 +109,6 @@
     # Enable fast mksnapshot runs.
     'v8_enable_fast_mksnapshot%': 0,
 
-    # Enable embedded builtins.
-    'v8_enable_embedded_builtins%': 1,
-
     # Enable the registration of unwinding info for Windows/x64 and ARM64.
     'v8_win64_unwinding_info%': 1,
 
@@ -149,6 +146,9 @@
     # Sets -dV8_CONCURRENT_MARKING
     'v8_enable_concurrent_marking%': 1,
 
+    # Sets -dV8_ARRAY_BUFFER_EXTENSION
+    'v8_enable_array_buffer_extension%': 1,
+
     # Enables various testing features.
     'v8_enable_test_features%': 0,
 
@@ -184,6 +184,15 @@
     # Enable lazy source positions by default.
     'v8_enable_lazy_source_positions%': 1,
 
+    # Enable third party HEAP library
+    'v8_enable_third_party_heap%': 0,
+
+    # Libaries used by third party heap
+    'v8_third_party_heap_libs%': [],
+
+    # Source code used by third party heap
+    'v8_third_party_heap_files%': [],
+
     # Disable write barriers when GCs are non-incremental and
     # heap has single generation.
     'v8_disable_write_barriers%': 0,
@@ -195,6 +204,17 @@
     # Use token threaded dispatch for the regular expression interpreter.
     # Use switch-based dispatch if this is false.
     'v8_enable_regexp_interpreter_threaded_dispatch%': 1,
+
+    # Disable all snapshot compression.
+    'v8_enable_snapshot_compression%': 1,
+
+    # Enable control-flow integrity features, such as pointer authentication
+    # for ARM64.
+    'v8_control_flow_integrity%': 0,
+
+    # Experimental support for native context independent code.
+    # https://crbug.com/v8/8888
+    'v8_enable_nci_code%': 0,
 
     # Variables from v8.gni
 
@@ -221,10 +241,7 @@
         'defines': ['V8_ENABLE_FUTURE',],
       }],
       ['v8_enable_lite_mode==1', {
-        'defines': [
-          'V8_LITE_MODE',
-          'V8_JITLESS_MODE',
-        ],
+        'defines': ['V8_LITE_MODE',],
       }],
       ['v8_enable_gdbjit==1', {
         'defines': ['ENABLE_GDB_JIT_INTERFACE',],
@@ -292,17 +309,20 @@
       ['v8_disable_write_barriers==1', {
         'defines': ['V8_DISABLE_WRITE_BARRIERS',],
       }],
+      ['v8_enable_third_party_heap==1', {
+        'defines': ['V8_ENABLE_THIRD_PARTY_HEAP',],
+      }],
       ['v8_enable_concurrent_marking==1', {
         'defines': ['V8_CONCURRENT_MARKING',],
+      }],
+      ['v8_enable_array_buffer_extension==1', {
+        'defines': ['V8_ARRAY_BUFFER_EXTENSION',],
       }],
       ['v8_enable_lazy_source_positions==1', {
         'defines': ['V8_ENABLE_LAZY_SOURCE_POSITIONS',],
       }],
       ['v8_check_microtasks_scopes_consistency==1', {
         'defines': ['V8_CHECK_MICROTASKS_SCOPES_CONSISTENCY',],
-      }],
-      ['v8_enable_embedded_builtins==1', {
-        'defines': ['V8_EMBEDDED_BUILTINS',],
       }],
       ['v8_use_siphash==1', {
         'defines': ['V8_USE_SIPHASH',],
@@ -324,6 +344,15 @@
       }],
       ['v8_enable_regexp_interpreter_threaded_dispatch==1', {
         'defines': ['V8_ENABLE_REGEXP_INTERPRETER_THREADED_DISPATCH',],
+      }],
+      ['v8_enable_snapshot_compression==1', {
+        'defines': ['V8_SNAPSHOT_COMPRESSION',],
+      }],
+      ['v8_control_flow_integrity==1', {
+        'defines': ['V8_ENABLE_CONTROL_FLOW_INTEGRITY',],
+      }],
+      ['v8_enable_nci_code==1', {
+        'defines': ['V8_ENABLE_NCI_CODE',],
       }],
     ],  # conditions
     'defines': [

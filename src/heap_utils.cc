@@ -15,7 +15,6 @@ using v8::Global;
 using v8::HandleScope;
 using v8::HeapSnapshot;
 using v8::Isolate;
-using v8::JSON;
 using v8::Local;
 using v8::MaybeLocal;
 using v8::Number;
@@ -119,8 +118,7 @@ class JSGraph : public EmbedderGraph {
           name_str += " ";
           name_str += n->Name();
         }
-        if (!String::NewFromUtf8(
-                 isolate_, name_str.c_str(), v8::NewStringType::kNormal)
+        if (!String::NewFromUtf8(isolate_, name_str.c_str())
                  .ToLocal(&value) ||
             obj->Set(context, name_string, value).IsNothing() ||
             obj->Set(context,
@@ -169,9 +167,8 @@ class JSGraph : public EmbedderGraph {
         Local<Value> edge_name_value;
         const char* edge_name = edge.first;
         if (edge_name != nullptr) {
-          if (!String::NewFromUtf8(
-                  isolate_, edge_name, v8::NewStringType::kNormal)
-                  .ToLocal(&edge_name_value)) {
+          if (!String::NewFromUtf8(isolate_, edge_name)
+              .ToLocal(&edge_name_value)) {
             return MaybeLocal<Array>();
           }
         } else {
@@ -237,7 +234,7 @@ class HeapSnapshotStream : public AsyncWrap,
   HeapSnapshotStream(
       Environment* env,
       HeapSnapshotPointer&& snapshot,
-      v8::Local<v8::Object> obj) :
+      Local<Object> obj) :
       AsyncWrap(env, obj, AsyncWrap::PROVIDER_HEAPSNAPSHOT),
       StreamBase(env),
       snapshot_(std::move(snapshot)) {
@@ -328,7 +325,7 @@ inline bool WriteSnapshot(Isolate* isolate, const char* filename) {
 
 }  // namespace
 
-void DeleteHeapSnapshot(const v8::HeapSnapshot* snapshot) {
+void DeleteHeapSnapshot(const HeapSnapshot* snapshot) {
   const_cast<HeapSnapshot*>(snapshot)->Delete();
 }
 
@@ -341,7 +338,7 @@ BaseObjectPtr<AsyncWrap> CreateHeapSnapshotStream(
     Local<FunctionTemplate> os = FunctionTemplate::New(env->isolate());
     os->Inherit(AsyncWrap::GetConstructorTemplate(env));
     Local<ObjectTemplate> ost = os->InstanceTemplate();
-    ost->SetInternalFieldCount(StreamBase::kStreamBaseFieldCount);
+    ost->SetInternalFieldCount(StreamBase::kInternalFieldCount);
     os->SetClassName(
         FIXED_ONE_BYTE_STRING(env->isolate(), "HeapSnapshotStream"));
     StreamBase::AddMethods(env, os);
@@ -378,8 +375,7 @@ void TriggerHeapSnapshot(const FunctionCallbackInfo<Value>& args) {
     DiagnosticFilename name(env, "Heap", "heapsnapshot");
     if (!WriteSnapshot(isolate, *name))
       return;
-    if (String::NewFromUtf8(isolate, *name, v8::NewStringType::kNormal)
-            .ToLocal(&filename_v)) {
+    if (String::NewFromUtf8(isolate, *name).ToLocal(&filename_v)) {
       args.GetReturnValue().Set(filename_v);
     }
     return;

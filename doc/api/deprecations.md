@@ -38,12 +38,15 @@ Occasionally, the deprecation of an API may be reversed. In such situations,
 this document will be updated with information relevant to the decision.
 However, the deprecation identifier will not be modified.
 
-## List of Deprecated APIs
+## List of deprecated APIs
 
 <a id="DEP0001"></a>
 ### DEP0001: `http.OutgoingMessage.prototype.flush`
 <!-- YAML
 changes:
+  - version: v14.0.0
+    pr-url: https://github.com/nodejs/node/pull/31164
+    description: End-of-Life.
   - version:
     - v4.8.6
     - v6.12.0
@@ -54,9 +57,9 @@ changes:
     description: Runtime deprecation.
 -->
 
-Type: Runtime
+Type: End-of-Life
 
-The `OutgoingMessage.prototype.flush()` method is deprecated. Use
+`OutgoingMessage.prototype.flush()` has been removed. Use
 `OutgoingMessage.prototype.flushHeaders()` instead.
 
 <a id="DEP0002"></a>
@@ -82,7 +85,7 @@ The `_linklist` module is deprecated. Please use a userland alternative.
 ### DEP0003: `_writableState.buffer`
 <!-- YAML
 changes:
-  - version: REPLACEME
+  - version: v14.0.0
     pr-url: https://github.com/nodejs/node/pull/31165
     description: End-of-Life
   - version:
@@ -236,7 +239,7 @@ to the `constants` property exposed by the relevant module. For instance,
 ### DEP0009: `crypto.pbkdf2` without digest
 <!-- YAML
 changes:
-  - version: REPLACEME
+  - version: v14.0.0
     pr-url: https://github.com/nodejs/node/pull/31166
     description: End-of-Life (for `digest === null`)
   - version: v11.0.0
@@ -404,7 +407,7 @@ The [`fs.readSync()`][] legacy `String` interface is deprecated. Use the
 ### DEP0016: `GLOBAL`/`root`
 <!-- YAML
 changes:
-  - version: REPLACEME
+  - version: v14.0.0
     pr-url: https://github.com/nodejs/node/pull/31167
     description: End-of-Life
   - version: v6.12.0
@@ -478,6 +481,9 @@ This behavior has been removed.
 ### DEP0020: `Server.connections`
 <!-- YAML
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/33647
+    description: Server.connections has been removed.
   - version:
     - v4.8.6
     - v6.12.0
@@ -488,10 +494,10 @@ changes:
     description: Runtime deprecation.
 -->
 
-Type: Runtime
+Type: End-of-Life
 
-The [`Server.connections`][] property is deprecated. Please use the
-[`Server.getConnections()`][] method instead.
+The `Server.connections` property was deprecated in Node.js v0.9.7 and has
+been removed. Please use the [`Server.getConnections()`][] method instead.
 
 <a id="DEP0021"></a>
 ### DEP0021: `Server.listenFD`
@@ -519,7 +525,7 @@ The `Server.listenFD()` method was deprecated and removed. Please use
 ### DEP0022: `os.tmpDir()`
 <!-- YAML
 changes:
-  - version: REPLACEME
+  - version: v14.0.0
     pr-url: https://github.com/nodejs/node/pull/31169
     description: End-of-Life.
   - version: v7.0.0
@@ -1432,12 +1438,15 @@ an officially supported API.
 ### DEP0068: `node debug`
 <!-- YAML
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/33648
+    description: The legacy `node debug` command was removed.
   - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/11441
     description: Runtime deprecation.
 -->
 
-Type: Runtime
+Type: End-of-Life
 
 `node debug` corresponds to the legacy CLI debugger which has been replaced with
 a V8-inspector based CLI debugger available through `node inspect`.
@@ -1544,12 +1553,15 @@ code, no replacement API is provided.
 ### DEP0074: `REPLServer.bufferedCommand`
 <!-- YAML
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/33286
+    description: End-of-Life.
   - version: v9.0.0
     pr-url: https://github.com/nodejs/node/pull/13687
     description: Runtime deprecation.
 -->
 
-Type: Runtime
+Type: End-of-Life
 
 The `REPLServer.bufferedCommand` property was deprecated in favor of
 [`REPLServer.clearBufferedCommand()`][].
@@ -1558,12 +1570,15 @@ The `REPLServer.bufferedCommand` property was deprecated in favor of
 ### DEP0075: `REPLServer.parseREPLKeyword()`
 <!-- YAML
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/33286
+    description: End-of-Life.
   - version: v9.0.0
     pr-url: https://github.com/nodejs/node/pull/14223
     description: Runtime deprecation.
 -->
 
-Type: Runtime
+Type: End-of-Life
 
 `REPLServer.parseREPLKeyword()` was removed from userland visibility.
 
@@ -1592,7 +1607,7 @@ querystring.parse(str, '\n', '=');
 This function is not completely equivalent to `querystring.parse()`. One
 difference is that `querystring.parse()` does url decoding:
 
-```sh
+```console
 > querystring.parse('%E5%A5%BD=1', '\n', '=');
 { '好': '1' }
 > tls.parseCertString('%E5%A5%BD=1');
@@ -1619,17 +1634,20 @@ supported API.
 ### DEP0078: `REPLServer.turnOffEditorMode()`
 <!-- YAML
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/33286
+    description: End-of-Life.
   - version: v9.0.0
     pr-url: https://github.com/nodejs/node/pull/15136
     description: Runtime deprecation.
 -->
 
-Type: Runtime
+Type: End-of-Life
 
 `REPLServer.turnOffEditorMode()` was removed from userland visibility.
 
 <a id="DEP0079"></a>
-### DEP0079: Custom inspection function on Objects via `.inspect()`
+### DEP0079: Custom inspection function on objects via `.inspect()`
 <!-- YAML
 changes:
   - version: v11.0.0
@@ -1684,12 +1702,15 @@ file descriptors.
 ### DEP0082: `REPLServer.prototype.memory()`
 <!-- YAML
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/33286
+    description: End-of-Life.
   - version: v9.0.0
     pr-url: https://github.com/nodejs/node/pull/16242
     description: Runtime deprecation.
 -->
 
-Type: Runtime
+Type: End-of-Life
 
 `REPLServer.prototype.memory()` is only necessary for the internal mechanics of
 the `REPLServer` itself. Do not use this function.
@@ -1754,7 +1775,7 @@ manager, as it is published on the npm registry under the same name. No source
 code modification is necessary if that is done.
 
 <a id="DEP0085"></a>
-### DEP0085: AsyncHooks Sensitive API
+### DEP0085: AsyncHooks sensitive API
 <!-- YAML
 changes:
   - version: 10.0.0
@@ -1769,7 +1790,7 @@ changes:
 
 Type: End-of-Life
 
-The AsyncHooks Sensitive API was never documented and had various minor issues.
+The AsyncHooks sensitive API was never documented and had various minor issues.
 Use the `AsyncResource` API instead. See
 <https://github.com/nodejs/node/issues/15572>.
 
@@ -1933,7 +1954,7 @@ should start using the `async_context` variant of `MakeCallback` or
 `CallbackScope`, or the high-level `AsyncResource` class.
 
 <a id="DEP0098"></a>
-### DEP0098: AsyncHooks Embedder `AsyncResource.emitBefore` and `AsyncResource.emitAfter` APIs
+### DEP0098: AsyncHooks embedder `AsyncResource.emitBefore` and `AsyncResource.emitAfter` APIs
 <!-- YAML
 changes:
   - version: v12.0.0
@@ -1958,7 +1979,7 @@ safer, and more convenient, alternative. See
 <https://github.com/nodejs/node/pull/18513>.
 
 <a id="DEP0099"></a>
-### DEP0099: async context-unaware `node::MakeCallback` C++ APIs
+### DEP0099: Async context-unaware `node::MakeCallback` C++ APIs
 <!-- YAML
 changes:
   - version: v10.0.0
@@ -2315,7 +2336,7 @@ Type: Documentation-only (supports [`--pending-deprecation`][])
 [`util.getSystemErrorName()`][] instead.
 
 <a id="DEP0120"></a>
-### DEP0120: Windows Performance Counter Support
+### DEP0120: Windows Performance Counter support
 <!-- YAML
 changes:
   - version: v12.0.0
@@ -2349,7 +2370,7 @@ The undocumented `net._setSimultaneousAccepts()` function was originally
 intended for debugging and performance tuning when using the `child_process`
 and `cluster` modules on Windows. The function is not generally useful and
 is being removed. See discussion here:
-https://github.com/nodejs/node/issues/18391
+<https://github.com/nodejs/node/issues/18391>
 
 <a id="DEP0122"></a>
 ### DEP0122: `tls` `Server.prototype.setOptions()`
@@ -2382,12 +2403,15 @@ Setting the TLS ServerName to an IP address is not permitted by
 ### DEP0124: using `REPLServer.rli`
 <!-- YAML
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/33286
+    description: End-of-Life.
   - version: v12.0.0
     pr-url: https://github.com/nodejs/node/pull/26260
     description: Runtime deprecation.
 -->
 
-Type: Runtime
+Type: End-of-Life
 
 This property is a reference to the instance itself.
 
@@ -2566,7 +2590,9 @@ and [`fs.createReadStream()`][]) or by passing a file descriptor in options.
 ### DEP0136: `http` `finished`
 <!-- YAML
 changes:
-  - version: v13.4.0
+  - version:
+     - v13.4.0
+     - v12.16.0
     pr-url: https://github.com/nodejs/node/pull/28679
     description: Documentation-only deprecation.
 -->
@@ -2587,7 +2613,7 @@ To maintain existing behaviour `response.finished` should be replaced with
 ### DEP0137: Closing fs.FileHandle on garbage collection
 <!-- YAML
 changes:
-  - version: REPLACEME
+  - version: v14.0.0
     pr-url: https://github.com/nodejs/node/pull/28396
     description: Runtime deprecation.
 -->
@@ -2614,6 +2640,142 @@ async function openAndClose() {
 }
 ```
 
+<a id="DEP0138"></a>
+### DEP0138: `process.mainModule`
+<!-- YAML
+changes:
+  - version: v14.0.0
+    pr-url: https://github.com/nodejs/node/pull/32232
+    description: Documentation-only deprecation.
+-->
+
+Type: Documentation-only
+
+[`process.mainModule`][] is a CommonJS-only feature while `process` global
+object is shared with non-CommonJS environment. Its use within ECMAScript
+modules is unsupported.
+
+It is deprecated in favor of [`require.main`][], because it serves the same
+purpose and is only available on CommonJS environment.
+
+<a id="DEP0139"></a>
+### DEP0139: `process.umask()` with no arguments
+<!-- YAML
+changes:
+  - version: v14.0.0
+    pr-url: https://github.com/nodejs/node/pull/32499
+    description: Runtime deprecation.
+-->
+
+Type: Runtime
+
+Calling `process.umask()` with no argument causes the process-wide umask to be
+written twice. This introduces a race condition between threads, and is a
+potential security vulnerability. There is no safe, cross-platform alternative
+API.
+
+<a id="DEP0140"></a>
+### DEP0140: Use `request.destroy()` instead of `request.abort()`
+<!-- YAML
+changes:
+  - version:
+    - v14.1.0
+    - v13.14.0
+    pr-url: https://github.com/nodejs/node/pull/32807
+    description: Documentation-only deprecation.
+-->
+
+Type: Documentation-only
+
+Use [`request.destroy()`][] instead of [`request.abort()`][].
+
+<a id="DEP0141"></a>
+### DEP0141: `repl.inputStream` and `repl.outputStream`
+<!-- YAML
+changes:
+  - version: v14.3.0
+    pr-url: https://github.com/nodejs/node/pull/33294
+    description: Documentation-only (supports [`--pending-deprecation`][]).
+-->
+
+Type: Documentation-only (supports [`--pending-deprecation`][])
+
+The `repl` module exported the input and output stream twice. Use `.input`
+instead of `.inputStream` and `.output` instead of `.outputStream`.
+
+<a id="DEP0142"></a>
+### DEP0142: `repl._builtinLibs`
+<!-- YAML
+changes:
+  - version: v14.3.0
+    pr-url: https://github.com/nodejs/node/pull/33294
+    description: Documentation-only (supports [`--pending-deprecation`][]).
+-->
+
+Type: Documentation-only
+
+The `repl` module exports a `_builtinLibs` property that contains an array with
+native modules. It was incomplete so far and instead it's better to rely upon
+`require('module').builtinModules`.
+
+<a id="DEP0143"></a>
+### DEP0143: `Transform._transformState`
+<!-- YAML
+changes:
+  - version: v14.5.0
+    pr-url: https://github.com/nodejs/node/pull/33126
+    description: Runtime deprecation.
+-->
+Type: Runtime
+`Transform._transformState` will be removed in future versions where it is
+no longer required due to simplification of the implementation.
+
+<a id="DEP0144"></a>
+### DEP0144: `module.parent`
+<!-- YAML
+changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/32217
+    description: Documentation-only deprecation.
+-->
+
+Type: Documentation-only (supports [`--pending-deprecation`][])
+
+A CommonJS module can access the first module that required it using
+`module.parent`. This feature is deprecated because it does not work
+consistently in the presence of ECMAScript modules and because it gives an
+inaccurate representation of the CommonJS module graph.
+
+Some modules use it to check if they are the entry point of the current process.
+Instead, it is recommended to compare `require.main` and `module`:
+
+```js
+if (require.main === module) {
+  // Code section that will run only if current file is the entry point.
+}
+```
+
+When looking for the CommonJS modules that have required the current one,
+`require.cache` and `module.children` can be used:
+
+```js
+const moduleParents = Object.values(require.cache)
+  .filter((m) => m.children.includes(module));
+```
+
+<a id="DEP0145"></a>
+### DEP0145: `socket.bufferSize`
+<!-- YAML
+changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/34088
+    description: Documentation-only deprecation.
+-->
+
+Type: Documentation-only
+
+[`socket.bufferSize`][] is just an alias for [`writable.writableLength`][].
+
 [`--pending-deprecation`]: cli.html#cli_pending_deprecation
 [`--throw-deprecation`]: cli.html#cli_throw_deprecation
 [`Buffer.allocUnsafeSlow(size)`]: buffer.html#buffer_class_method_buffer_allocunsafeslow_size
@@ -2625,7 +2787,6 @@ async function openAndClose() {
 [`EventEmitter.listenerCount(emitter, eventName)`]: events.html#events_eventemitter_listenercount_emitter_eventname
 [`REPLServer.clearBufferedCommand()`]: repl.html#repl_replserver_clearbufferedcommand
 [`ReadStream.open()`]: fs.html#fs_class_fs_readstream
-[`Server.connections`]: net.html#net_server_connections
 [`Server.getConnections()`]: net.html#net_server_getconnections_callback
 [`Server.listen({fd: <number>})`]: net.html#net_server_listen_handle_backlog_callback
 [`SlowBuffer`]: buffer.html#buffer_class_slowbuffer
@@ -2671,10 +2832,14 @@ async function openAndClose() {
 [`os.networkInterfaces()`]: os.html#os_os_networkinterfaces
 [`os.tmpdir()`]: os.html#os_os_tmpdir
 [`process.env`]: process.html#process_process_env
+[`process.mainModule`]: process.html#process_process_mainmodule
 [`punycode`]: punycode.html
 [`require.extensions`]: modules.html#modules_require_extensions
+[`require.main`]: modules.html#modules_accessing_the_main_module
+[`request.abort()`]: http.html#http_request_abort
 [`request.socket`]: http.html#http_request_socket
 [`request.connection`]: http.html#http_request_connection
+[`request.destroy()`]: http.html#http_request_destroy_error
 [`response.socket`]: http.html#http_response_socket
 [`response.connection`]: http.html#http_response_connection
 [`response.end()`]: http.html#http_response_end_data_encoding_callback
@@ -2684,6 +2849,7 @@ async function openAndClose() {
 [`script.createCachedData()`]: vm.html#vm_script_createcacheddata
 [`setInterval()`]: timers.html#timers_setinterval_callback_delay_args
 [`setTimeout()`]: timers.html#timers_settimeout_callback_delay_args
+[`socket.bufferSize`]: net.html#net_socket_buffersize
 [`timeout.ref()`]: timers.html#timers_timeout_ref
 [`timeout.refresh()`]: timers.html#timers_timeout_refresh
 [`timeout.unref()`]: timers.html#timers_timeout_unref
@@ -2720,6 +2886,7 @@ async function openAndClose() {
 [`util`]: util.html
 [`worker.exitedAfterDisconnect`]: cluster.html#cluster_worker_exitedafterdisconnect
 [`worker.terminate()`]: worker_threads.html#worker_threads_worker_terminate
+[`writable.writableLength`]: stream.html#stream_writable_writablelength
 [`zlib.bytesWritten`]: zlib.html#zlib_zlib_byteswritten
 [Legacy URL API]: url.html#url_legacy_url_api
 [NIST SP 800-38D]: https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf

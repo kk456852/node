@@ -151,6 +151,17 @@ void RegExpMacroAssemblerX64::AdvanceRegister(int reg, int by) {
 
 void RegExpMacroAssemblerX64::Backtrack() {
   CheckPreemption();
+  if (has_backtrack_limit()) {
+    Label next;
+    __ incq(Operand(rbp, kBacktrackCount));
+    __ cmpq(Operand(rbp, kBacktrackCount), Immediate(backtrack_limit()));
+    __ j(not_equal, &next);
+
+    // Exceeded limits are treated as a failed match.
+    Fail();
+
+    __ bind(&next);
+  }
   // Pop Code offset from backtrack stack, add Code and jump to location.
   Pop(rbx);
   __ addq(rbx, code_object_pointer());
@@ -203,9 +214,8 @@ void RegExpMacroAssemblerX64::CheckGreedyLoop(Label* on_equal) {
   __ bind(&fallthrough);
 }
 
-
 void RegExpMacroAssemblerX64::CheckNotBackReferenceIgnoreCase(
-    int start_reg, bool read_backward, bool unicode, Label* on_no_match) {
+    int start_reg, bool read_backward, Label* on_no_match) {
   Label fallthrough;
   ReadPositionFromRegister(rdx, start_reg);  // Offset of start of capture
   ReadPositionFromRegister(rbx, start_reg + 1);  // Offset of end of capture
@@ -310,7 +320,7 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceIgnoreCase(
     //   Address byte_offset1 - Address captured substring's start.
     //   Address byte_offset2 - Address of current character position.
     //   size_t byte_length - length of capture in bytes(!)
-//   Isolate* isolate or 0 if unicode flag.
+    //   Isolate* isolate.
 #ifdef V8_TARGET_OS_WIN
     DCHECK(rcx == arg_reg_1);
     DCHECK(rdx == arg_reg_2);
@@ -338,14 +348,7 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceIgnoreCase(
     // Set byte_length.
     __ movq(arg_reg_3, rbx);
     // Isolate.
-#ifdef V8_INTL_SUPPORT
-    if (unicode) {
-      __ movq(arg_reg_4, Immediate(0));
-    } else  // NOLINT
-#endif      // V8_INTL_SUPPORT
-    {
-      __ LoadAddress(arg_reg_4, ExternalReference::isolate_address(isolate()));
-    }
+    __ LoadAddress(arg_reg_4, ExternalReference::isolate_address(isolate()));
 
     { // NOLINT: Can't find a way to open this scope without confusing the
       // linter.
@@ -376,7 +379,6 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceIgnoreCase(
   }
   __ bind(&fallthrough);
 }
-
 
 void RegExpMacroAssemblerX64::CheckNotBackReference(int start_reg,
                                                     bool read_backward,
@@ -713,8 +715,14 @@ Handle<HeapObject> RegExpMacroAssemblerX64::GetCode(Handle<String> source) {
   __ pushq(rbx);  // Callee-save
 #endif
 
+  STATIC_ASSERT(kSuccessfulCaptures ==
+                kLastCalleeSaveRegister - kSystemPointerSize);
   __ Push(Immediate(0));  // Number of successful matches in a global regexp.
+  STATIC_ASSERT(kStringStartMinusOne ==
+                kSuccessfulCaptures - kSystemPointerSize);
   __ Push(Immediate(0));  // Make room for "string start - 1" constant.
+  STATIC_ASSERT(kBacktrackCount == kStringStartMinusOne - kSystemPointerSize);
+  __ Push(Immediate(0));  // The backtrack counter.
 
   // Check if we have space on the stack for registers.
   Label stack_limit_hit;
@@ -997,7 +1005,8 @@ Handle<HeapObject> RegExpMacroAssemblerX64::GetCode(Handle<String> source) {
   Handle<Code> code = Factory::CodeBuilder(isolate, code_desc, Code::REGEXP)
                           .set_self_reference(masm_.CodeObject())
                           .Build();
-  PROFILE(isolate, RegExpCodeCreateEvent(AbstractCode::cast(*code), *source));
+  PROFILE(isolate,
+          RegExpCodeCreateEvent(Handle<AbstractCode>::cast(code), source));
   return Handle<HeapObject>::cast(code);
 }
 
@@ -1035,25 +1044,6 @@ RegExpMacroAssembler::IrregexpImplementation
   return kX64Implementation;
 }
 
-void RegExpMacroAssemblerX64::LoadCurrentCharacterImpl(int cp_offset,
-                                                       Label* on_end_of_input,
-                                                       bool check_bounds,
-                                                       int characters,
-                                                       int eats_at_least) {
-  // It's possible to preload a small number of characters when each success
-  // path requires a large number of characters, but not the reverse.
-  DCHECK_GE(eats_at_least, characters);
-
-  DCHECK(cp_offset < (1<<30));  // Be sane! (And ensure negation works)
-  if (check_bounds) {
-    if (cp_offset >= 0) {
-      CheckPosition(cp_offset + eats_at_least - 1, on_end_of_input);
-    } else {
-      CheckPosition(cp_offset, on_end_of_input);
-    }
-  }
-  LoadCurrentCharacterUnchecked(cp_offset, characters);
-}
 
 void RegExpMacroAssemblerX64::PopCurrentPosition() {
   Pop(rdi);

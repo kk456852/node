@@ -1,8 +1,10 @@
-# Worker Threads
+# Worker threads
 
 <!--introduced_in=v10.5.0-->
 
 > Stability: 2 - Stable
+
+<!-- source_link=lib/worker_threads.js -->
 
 The `worker_threads` module enables the use of threads that execute JavaScript
 in parallel. To access it:
@@ -55,6 +57,10 @@ correlation between tasks and their outcomes. See
 ["Using `AsyncResource` for a `Worker` thread pool"][async-resource-worker-pool]
 in the `async_hooks` documentation for an example implementation.
 
+Worker threads inherit non-process-specific options by default. Refer to
+[`Worker constructor options`][] to know how to customize worker thread options,
+specifically `argv` and `execArgv` options.
+
 ## `worker.isMainThread`
 <!-- YAML
 added: v10.5.0
@@ -75,6 +81,42 @@ if (isMainThread) {
   console.log(isMainThread);  // Prints 'false'.
 }
 ```
+
+## `worker.markAsUntransferable(object)`
+<!-- YAML
+added: v14.5.0
+-->
+
+Mark an object as not transferable. If `object` occurs in the transfer list of
+a [`port.postMessage()`][] call, it will be ignored.
+
+In particular, this makes sense for objects that can be cloned, rather than
+transferred, and which are used by other objects on the sending side.
+For example, Node.js marks the `ArrayBuffer`s it uses for its
+[`Buffer` pool][`Buffer.allocUnsafe()`] with this.
+
+This operation cannot be undone.
+
+```js
+const { MessageChannel, markAsUntransferable } = require('worker_threads');
+
+const pooledBuffer = new ArrayBuffer(8);
+const typedArray1 = new Uint8Array(pooledBuffer);
+const typedArray2 = new Float64Array(pooledBuffer);
+
+markAsUntransferable(pooledBuffer);
+
+const { port1 } = new MessageChannel();
+port1.postMessage(typedArray1, [ typedArray1.buffer ]);
+
+// The following line prints the contents of typedArray1 -- it still owns its
+// memory and has been cloned, not transfered. Without `markAsUntransferable()`,
+// this would print an empty Uint8Array. typedArray2 is intact as well.
+console.log(typedArray1);
+console.log(typedArray2);
+```
+
+There is no equivalent to this API in browsers.
 
 ## `worker.moveMessagePortToContext(port, contextifiedSandbox)`
 <!-- YAML
@@ -161,13 +203,16 @@ When this function is used, no `'message'` event will be emitted and the
 
 ## `worker.resourceLimits`
 <!-- YAML
-added: v13.2.0
+added:
+ - v13.2.0
+ - v12.16.0
 -->
 
 * {Object}
   * `maxYoungGenerationSizeMb` {number}
   * `maxOldGenerationSizeMb` {number}
   * `codeRangeSizeMb` {number}
+  * `stackSizeMb` {number}
 
 Provides the set of JS engine resource constraints inside this Worker thread.
 If the `resourceLimits` option was passed to the [`Worker`][] constructor,
@@ -296,6 +341,15 @@ input of [`port.postMessage()`][].
 Listeners on this event will receive a clone of the `value` parameter as passed
 to `postMessage()` and no further arguments.
 
+### Event: `'messageerror'`
+<!-- YAML
+added: v14.5.0
+-->
+
+* `error` {Error} An Error object
+
+The `'messageerror'` event is emitted when deserializing a message failed.
+
 ### `port.close()`
 <!-- YAML
 added: v10.5.0
@@ -311,6 +365,13 @@ are part of the channel.
 ### `port.postMessage(value[, transferList])`
 <!-- YAML
 added: v10.5.0
+changes:
+  - version: v14.5.0
+    pr-url: https://github.com/nodejs/node/pull/33360
+    description: Added `KeyObject` to the list of cloneable types.
+  - version: v14.5.0
+    pr-url: https://github.com/nodejs/node/pull/33772
+    description: Added `FileHandle` to the list of transferable types.
 -->
 
 * `value` {any}
@@ -328,7 +389,8 @@ In particular, the significant differences to `JSON` are:
 * `value` may contain typed arrays, both using `ArrayBuffer`s
    and `SharedArrayBuffer`s.
 * `value` may contain [`WebAssembly.Module`][] instances.
-* `value` may not contain native (C++-backed) objects other than `MessagePort`s.
+* `value` may not contain native (C++-backed) objects other than `MessagePort`s,
+  [`FileHandle`][]s, and [`KeyObject`][]s.
 
 ```js
 const { MessageChannel } = require('worker_threads');
@@ -342,7 +404,8 @@ circularData.foo = circularData;
 port2.postMessage(circularData);
 ```
 
-`transferList` may be a list of `ArrayBuffer` and `MessagePort` objects.
+`transferList` may be a list of [`ArrayBuffer`][], [`MessagePort`][] and
+[`FileHandle`][] objects.
 After transferring, they will not be usable on the sending side of the channel
 anymore (even if they are not contained in `value`). Unlike with
 [child processes][], transferring handles such as network sockets is currently
@@ -388,6 +451,54 @@ posting without having side effects.
 
 For more information on the serialization and deserialization mechanisms
 behind this API, see the [serialization API of the `v8` module][v8.serdes].
+
+#### Considerations when transferring TypedArrays and Buffers
+
+All `TypedArray` and `Buffer` instances are views over an underlying
+`ArrayBuffer`. That is, it is the `ArrayBuffer` that actually stores
+the raw data while the `TypedArray` and `Buffer` objects provide a
+way of viewing and manipulating the data. It is possible and common
+for multiple views to be created over the same `ArrayBuffer` instance.
+Great care must be taken when using a transfer list to transfer an
+`ArrayBuffer` as doing so will cause all `TypedArray` and `Buffer`
+instances that share that same `ArrayBuffer` to become unusable.
+
+```js
+const ab = new ArrayBuffer(10);
+
+const u1 = new Uint8Array(ab);
+const u2 = new Uint16Array(ab);
+
+console.log(u2.length);  // prints 5
+
+port.postMessage(u1, [u1.buffer]);
+
+console.log(u2.length);  // prints 0
+```
+
+For `Buffer` instances, specifically, whether the underlying
+`ArrayBuffer` can be transferred or cloned depends entirely on how
+instances were created, which often cannot be reliably determined.
+
+An `ArrayBuffer` can be marked with [`markAsUntransferable()`][] to indicate
+that it should always be cloned and never transferred.
+
+Depending on how a `Buffer` instance was created, it may or may
+not own its underlying `ArrayBuffer`. An `ArrayBuffer` must not
+be transferred unless it is known that the `Buffer` instance
+owns it. In particular, for `Buffer`s created from the internal
+`Buffer` pool (using, for instance `Buffer.from()` or `Buffer.alloc()`),
+transferring them is not possible and they will always be cloned,
+which sends a copy of the entire `Buffer` pool.
+This behavior may come with unintended higher memory
+usage and possible security concerns.
+
+See [`Buffer.allocUnsafe()`][] for more details on `Buffer` pooling.
+
+The `ArrayBuffer`s for `Buffer` instances created using
+`Buffer.alloc()` or `Buffer.allocUnsafeSlow()` can always be
+transferred but doing so will render all other existing views of
+those `ArrayBuffer`s unusable.
 
 ### `port.ref()`
 <!-- YAML
@@ -509,17 +620,37 @@ if (isMainThread) {
 <!-- YAML
 added: v10.5.0
 changes:
-  - version: v13.2.0
+  - version:
+    - REPLACEME
+    pr-url: ???
+    description: The `trackUnmanagedFds` option was introduced.
+  - version:
+     - v13.13.0
+     - v12.17.0
+    pr-url: https://github.com/nodejs/node/pull/32278
+    description: The `transferList` option was introduced.
+  - version:
+     - v13.12.0
+     - v12.17.0
+    pr-url: https://github.com/nodejs/node/pull/31664
+    description: The `filename` parameter can be a WHATWG `URL` object using
+                 `file:` protocol.
+  - version:
+     - v13.2.0
+     - v12.16.0
     pr-url: https://github.com/nodejs/node/pull/26628
     description: The `resourceLimits` option was introduced.
-  - version: v13.4.0
+  - version:
+     - v13.4.0
+     - v12.16.0
     pr-url: https://github.com/nodejs/node/pull/30559
     description: The `argv` option was introduced.
 -->
 
-* `filename` {string} The path to the Worker’s main script. Must be
-  either an absolute path or a relative path (i.e. relative to the
-  current working directory) starting with `./` or `../`.
+* `filename` {string|URL} The path to the Worker’s main script or module. Must
+  be either an absolute path or a relative path (i.e. relative to the
+  current working directory) starting with `./` or `../`, or a WHATWG `URL`
+  object using `file:` protocol.
   If `options.eval` is `true`, this is a string containing JavaScript code
   rather than a path.
 * `options` {Object}
@@ -532,8 +663,9 @@ changes:
     to specify that the parent thread and the child thread should share their
     environment variables; in that case, changes to one thread’s `process.env`
     object will affect the other thread as well. **Default:** `process.env`.
-  * `eval` {boolean} If `true`, interpret the first argument to the constructor
-    as a script that is executed once the worker is online.
+  * `eval` {boolean} If `true` and the first argument is a `string`, interpret
+    the first argument to the constructor as a script that is executed once the
+    worker is online.
   * `execArgv` {string[]} List of node CLI options passed to the worker.
     V8 options (such as `--max-old-space-size`) and options that affect the
     process (such as `--title`) are not supported. If set, this will be provided
@@ -551,6 +683,16 @@ changes:
     occur as described in the [HTML structured clone algorithm][], and an error
     will be thrown if the object cannot be cloned (e.g. because it contains
     `function`s).
+  * `trackUnmanagedFds` {boolean} If this is set to `true`, then the Worker will
+    track raw file descriptors managed through [`fs.open()`][] and
+    [`fs.close()`][], and close them when the Worker exits, similar to other
+    resources like network sockets or file descriptors managed through
+    the [`FileHandle`][] API. This option is automatically inherited by all
+    nested `Worker`s. **Default**: `false`.
+  * `transferList` {Object[]} If one or more `MessagePort`-like objects
+    are passed in `workerData`, a `transferList` is required for those
+    items or [`ERR_MISSING_MESSAGE_PORT_IN_TRANSFER_LIST`][] will be thrown.
+    See [`port.postMessage()`][] for more information.
   * `resourceLimits` {Object} An optional set of resource limits for the new
     JS engine instance. Reaching these limits will lead to termination of the
     `Worker` instance. These limits only affect the JS engine, and no external
@@ -561,6 +703,8 @@ changes:
       recently created objects.
     * `codeRangeSizeMb` {number} The size of a pre-allocated memory range
       used for generated code.
+    * `stackSizeMb` {number} The default maximum stack size for the thread.
+      Small values may lead to unusable Worker instances. **Default:** `4`.
 
 ### Event: `'error'`
 <!-- YAML
@@ -600,6 +744,15 @@ See the [`port.on('message')`][] event for more details.
 All messages sent from the worker thread will be emitted before the
 [`'exit'` event][] is emitted on the `Worker` object.
 
+### Event: `'messageerror'`
+<!-- YAML
+added: v14.5.0
+-->
+
+* `error` {Error} An Error object
+
+The `'messageerror'` event is emitted when deserializing a message failed.
+
 ### Event: `'online'`
 <!-- YAML
 added: v10.5.0
@@ -607,6 +760,23 @@ added: v10.5.0
 
 The `'online'` event is emitted when the worker thread has started executing
 JavaScript code.
+
+### `worker.getHeapSnapshot()`
+<!-- YAML
+added:
+ - v13.9.0
+ - v12.17.0
+-->
+
+* Returns: {Promise} A promise for a Readable Stream containing
+  a V8 heap snapshot
+
+Returns a readable stream for a V8 snapshot of the current state of the Worker.
+See [`v8.getHeapSnapshot()`][] for more details.
+
+If the Worker thread is no longer running, which may occur before the
+[`'exit'` event][] is emitted, the returned `Promise` will be rejected
+immediately with an [`ERR_WORKER_NOT_RUNNING`][] error.
 
 ### `worker.postMessage(value[, transferList])`
 <!-- YAML
@@ -632,13 +802,16 @@ no effect.
 
 ### `worker.resourceLimits`
 <!-- YAML
-added: v13.2.0
+added:
+ - v13.2.0
+ - v12.16.0
 -->
 
 * {Object}
   * `maxYoungGenerationSizeMb` {number}
   * `maxOldGenerationSizeMb` {number}
   * `codeRangeSizeMb` {number}
+  * `stackSizeMb` {number}
 
 Provides the set of JS engine resource constraints for this Worker thread.
 If the `resourceLimits` option was passed to the [`Worker`][] constructor,
@@ -681,21 +854,6 @@ inside the worker thread. If `stdout: true` was not passed to the
 [`Worker`][] constructor, then data will be piped to the parent thread's
 [`process.stdout`][] stream.
 
-### `worker.takeHeapSnapshot()`
-<!-- YAML
-added: REPLACEME
--->
-
-* Returns: {Promise} A promise for a Readable Stream containing
-  a V8 heap snapshot
-
-Returns a readable stream for a V8 snapshot of the current state of the Worker.
-See [`v8.getHeapSnapshot()`][] for more details.
-
-If the Worker thread is no longer running, which may occur before the
-[`'exit'` event][] is emitted, the returned `Promise` will be rejected
-immediately with an [`ERR_WORKER_NOT_RUNNING`][] error.
-
 ### `worker.terminate()`
 <!-- YAML
 added: v10.5.0
@@ -736,17 +894,25 @@ active handle in the event system. If the worker is already `unref()`ed calling
 
 [`'close'` event]: #worker_threads_event_close
 [`'exit'` event]: #worker_threads_event_exit
+[`ArrayBuffer`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer
 [`AsyncResource`]: async_hooks.html#async_hooks_class_asyncresource
 [`Buffer`]: buffer.html
+[`Buffer.allocUnsafe()`]: buffer.html#buffer_class_method_buffer_allocunsafe_size
+[`ERR_MISSING_MESSAGE_PORT_IN_TRANSFER_LIST`]: errors.html#errors_err_missing_message_port_in_transfer_list
 [`ERR_WORKER_NOT_RUNNING`]: errors.html#ERR_WORKER_NOT_RUNNING
 [`EventEmitter`]: events.html
 [`EventTarget`]: https://developer.mozilla.org/en-US/docs/Web/API/EventTarget
+[`FileHandle`]: fs.html#fs_class_filehandle
+[`KeyObject`]: crypto.html#crypto_class_keyobject
 [`MessagePort`]: #worker_threads_class_messageport
 [`SharedArrayBuffer`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
 [`Uint8Array`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array
 [`WebAssembly.Module`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module
 [`Worker`]: #worker_threads_class_worker
 [`cluster` module]: cluster.html
+[`fs.open()`]: fs.html#fs_fs_open_path_flags_mode_callback
+[`fs.close()`]: fs.html#fs_fs_close_fd_callback
+[`markAsUntransferable()`]: #worker_threads_worker_markasuntransferable_object
 [`port.on('message')`]: #worker_threads_event_message
 [`port.onmessage()`]: https://developer.mozilla.org/en-US/docs/Web/API/MessagePort/onmessage
 [`port.postMessage()`]: #worker_threads_port_postmessage_value_transferlist
@@ -768,6 +934,7 @@ active handle in the event system. If the worker is already `unref()`ed calling
 [`trace_events`]: tracing.html
 [`v8.getHeapSnapshot()`]: v8.html#v8_v8_getheapsnapshot
 [`vm`]: vm.html
+[`Worker constructor options`]: #worker_threads_new_worker_filename_options
 [`worker.on('message')`]: #worker_threads_event_message_1
 [`worker.postMessage()`]: #worker_threads_worker_postmessage_value_transferlist
 [`worker.SHARE_ENV`]: #worker_threads_worker_share_env

@@ -1,11 +1,19 @@
 'use strict';
 
 const common = require('../common');
-const { Writable, Readable, Transform, finished } = require('stream');
+const {
+  Writable,
+  Readable,
+  Transform,
+  finished,
+  Duplex,
+  PassThrough
+} = require('stream');
 const assert = require('assert');
 const EE = require('events');
 const fs = require('fs');
 const { promisify } = require('util');
+const http = require('http');
 
 {
   const rs = new Readable({
@@ -138,7 +146,7 @@ const { promisify } = require('util');
     () => finished(rs, 'foo', () => {}),
     {
       code: 'ERR_INVALID_ARG_TYPE',
-      message: /opts/
+      message: /options/
     }
   );
   assert.throws(
@@ -181,7 +189,7 @@ const { promisify } = require('util');
   const streamLike = new EE();
   streamLike.readableEnded = true;
   streamLike.readable = true;
-  finished(streamLike, common.mustCall);
+  finished(streamLike, common.mustCall());
   streamLike.emit('close');
 }
 
@@ -312,7 +320,6 @@ testClosed((opts) => new Writable({ write() {}, ...opts }));
   }));
 }
 
-
 {
   const r = new Readable({
     autoDestroy: false
@@ -331,4 +338,164 @@ testClosed((opts) => new Writable({ write() {}, ...opts }));
   rs.on('end', common.mustCall(() => {
     finished(rs, common.mustCall());
   }));
+}
+
+{
+  const d = new EE();
+  d._writableState = {};
+  d._writableState.finished = true;
+  finished(d, { readable: false, writable: true }, common.mustCall((err) => {
+    assert.strictEqual(err, undefined);
+  }));
+  d._writableState.errored = true;
+  d.emit('close');
+}
+
+{
+  const r = new Readable();
+  finished(r, common.mustCall((err) => {
+    assert.strictEqual(err.code, 'ERR_STREAM_PREMATURE_CLOSE');
+  }));
+  r.push('asd');
+  r.push(null);
+  r.destroy();
+}
+
+{
+  const d = new Duplex({
+    final(cb) { }, // Never close writable side for test purpose
+    read() {
+      this.push(null);
+    }
+  });
+
+  d.on('end', common.mustCall());
+
+  finished(d, { readable: true, writable: false }, common.mustCall());
+
+  d.end();
+  d.resume();
+}
+
+{
+  const d = new Duplex({
+    final(cb) { }, // Never close writable side for test purpose
+    read() {
+      this.push(null);
+    }
+  });
+
+  d.on('end', common.mustCall());
+
+  d.end();
+  finished(d, { readable: true, writable: false }, common.mustCall());
+
+  d.resume();
+}
+
+{
+  // Test for compat for e.g. fd-slicer which implements
+  // non standard destroy behavior which might not emit
+  // 'close'.
+  const r = new Readable();
+  finished(r, common.mustCall());
+  r.resume();
+  r.push('asd');
+  r.destroyed = true;
+  r.push(null);
+}
+
+{
+  // Regression https://github.com/nodejs/node/issues/33130
+  const response = new PassThrough();
+
+  class HelloWorld extends Duplex {
+    constructor(response) {
+      super({
+        autoDestroy: false
+      });
+
+      this.response = response;
+      this.readMore = false;
+
+      response.once('end', () => {
+        this.push(null);
+      });
+
+      response.on('readable', () => {
+        if (this.readMore) {
+          this._read();
+        }
+      });
+    }
+
+    _read() {
+      const { response } = this;
+
+      this.readMore = true;
+
+      if (response.readableLength) {
+        this.readMore = false;
+      }
+
+      let data;
+      while ((data = response.read()) !== null) {
+        this.push(data);
+      }
+    }
+  }
+
+  const instance = new HelloWorld(response);
+  instance.setEncoding('utf8');
+  instance.end();
+
+  (async () => {
+    await EE.once(instance, 'finish');
+
+    setImmediate(() => {
+      response.write('chunk 1');
+      response.write('chunk 2');
+      response.write('chunk 3');
+      response.end();
+    });
+
+    let res = '';
+    for await (const data of instance) {
+      res += data;
+    }
+
+    assert.strictEqual(res, 'chunk 1chunk 2chunk 3');
+  })().then(common.mustCall());
+}
+
+{
+  const p = new PassThrough();
+  p.end();
+  finished(p, common.mustNotCall());
+}
+
+{
+  const p = new PassThrough();
+  p.end();
+  p.on('finish', common.mustCall(() => {
+    finished(p, common.mustNotCall());
+  }));
+}
+
+{
+  const server = http.createServer((req, res) => {
+    res.on('close', () => {
+      finished(res, common.mustCall(() => {
+        server.close();
+      }));
+    });
+    res.end();
+  })
+  .listen(0, function() {
+    http.request({
+      method: 'GET',
+      port: this.address().port
+    }).end()
+      .on('response', common.mustCall());
+  });
 }

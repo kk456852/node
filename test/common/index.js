@@ -27,7 +27,7 @@ const process = global.process;  // Some tests tamper with the process global.
 const assert = require('assert');
 const { exec, execSync, spawnSync } = require('child_process');
 const fs = require('fs');
-// Do not require 'os' until needed so that test-os-checked-fucnction can
+// Do not require 'os' until needed so that test-os-checked-function can
 // monkey patch it. If 'os' is required here, that test will fail.
 const path = require('path');
 const util = require('util');
@@ -50,6 +50,7 @@ const noop = () => {};
 
 const hasCrypto = Boolean(process.versions.openssl) &&
                   !process.env.NODE_SKIP_CRYPTO;
+const hasQuic = hasCrypto && Boolean(process.versions.ngtcp2);
 
 // Check for flags. Skip this for workers (both, the `cluster` module and
 // `worker_threads`) and child processes.
@@ -59,12 +60,12 @@ if (process.argv.length === 2 &&
     !process.env.NODE_SKIP_FLAG_CHECK &&
     isMainThread &&
     hasCrypto &&
-    module.parent &&
+    require.main &&
     require('cluster').isMaster) {
   // The copyright notice is relatively big and the flags could come afterwards.
   const bytesToRead = 1500;
   const buffer = Buffer.allocUnsafe(bytesToRead);
-  const fd = fs.openSync(module.parent.filename, 'r');
+  const fd = fs.openSync(require.main.filename, 'r');
   const bytesRead = fs.readSync(fd, buffer, 0, bytesToRead);
   fs.closeSync(fd);
   const source = buffer.toString('utf8', 0, bytesRead);
@@ -111,6 +112,8 @@ const isFreeBSD = process.platform === 'freebsd';
 const isOpenBSD = process.platform === 'openbsd';
 const isLinux = process.platform === 'linux';
 const isOSX = process.platform === 'darwin';
+
+const isDumbTerminal = process.env.TERM === 'dumb';
 
 const rootDir = isWindows ? 'c:\\' : '/';
 
@@ -254,6 +257,7 @@ function platformTimeout(ms) {
 }
 
 let knownGlobals = [
+  AbortController,
   clearImmediate,
   clearInterval,
   clearTimeout,
@@ -307,10 +311,9 @@ function runCallChecks(exitCode) {
     if ('minimum' in context) {
       context.messageSegment = `at least ${context.minimum}`;
       return context.actual < context.minimum;
-    } else {
-      context.messageSegment = `exactly ${context.exact}`;
-      return context.actual !== context.exact;
     }
+    context.messageSegment = `exactly ${context.exact}`;
+    return context.actual !== context.exact;
   });
 
   failed.forEach(function(context) {
@@ -416,9 +419,12 @@ function getCallSite(top) {
 
 function mustNotCall(msg) {
   const callSite = getCallSite(mustNotCall);
-  return function mustNotCall() {
+  return function mustNotCall(...args) {
+    const argsInfo = args.length > 0 ?
+      `\ncalled with arguments: ${args.map(util.inspect).join(', ')}` : '';
     assert.fail(
-      `${msg || 'function should not have been called'} at ${callSite}`);
+      `${msg || 'function should not have been called'} at ${callSite}` +
+      argsInfo);
   };
 }
 
@@ -463,9 +469,8 @@ function nodeProcessAborted(exitCode, signal) {
   // the expected exit codes or signals.
   if (signal !== null) {
     return expectedSignals.includes(signal);
-  } else {
-    return expectedExitCodes.includes(exitCode);
   }
+  return expectedExitCodes.includes(exitCode);
 }
 
 function isAlive(pid) {
@@ -547,28 +552,9 @@ function expectsError(validator, exact) {
   }, exact);
 }
 
-const suffix = 'This is caused by either a bug in Node.js ' +
-  'or incorrect usage of Node.js internals.\n' +
-  'Please open an issue with this stack trace at ' +
-  'https://github.com/nodejs/node/issues\n';
-
-function expectsInternalAssertion(fn, message) {
-  assert.throws(fn, {
-    message: `${message}\n${suffix}`,
-    name: 'Error',
-    code: 'ERR_INTERNAL_ASSERTION'
-  });
-}
-
 function skipIfInspectorDisabled() {
   if (!process.features.inspector) {
     skip('V8 inspector is disabled');
-  }
-}
-
-function skipIfReportDisabled() {
-  if (!process.config.variables.node_report) {
-    skip('Diagnostic reporting is disabled');
   }
 }
 
@@ -672,7 +658,13 @@ function invalidArgTypeHelper(input) {
   return ` Received type ${typeof input} (${inspected})`;
 }
 
-module.exports = {
+function skipIfDumbTerminal() {
+  if (isDumbTerminal) {
+    skip('skipping - dumb terminal');
+  }
+}
+
+const common = {
   allowGlobals,
   buildType,
   canCreateSymLink,
@@ -680,7 +672,6 @@ module.exports = {
   createZeroFilledFile,
   disableCrashOnUnhandledRejection,
   expectsError,
-  expectsInternalAssertion,
   expectWarning,
   getArrayBufferViews,
   getBufferSources,
@@ -688,10 +679,12 @@ module.exports = {
   getTTYfd,
   hasIntl,
   hasCrypto,
+  hasQuic,
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAIX,
   isAlive,
+  isDumbTerminal,
   isFreeBSD,
   isLinux,
   isMainThread,
@@ -712,12 +705,12 @@ module.exports = {
   runWithInvalidFD,
   skip,
   skipIf32Bits,
+  skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
-  skipIfReportDisabled,
   skipIfWorker,
 
-  get enoughTestCPU() {
+  get enoughTestCpu() {
     const cpus = require('os').cpus();
     return Array.isArray(cpus) && (cpus.length > 1 || cpus[0].speed > 999);
   },
@@ -783,8 +776,6 @@ module.exports = {
     return localhostIPv4;
   },
 
-  get localhostIPv6() { return '::1'; },
-
   // opensslCli defined lazily to reduce overhead of spawnSync
   get opensslCli() {
     if (opensslCli !== null) return opensslCli;
@@ -815,3 +806,12 @@ module.exports = {
   }
 
 };
+
+const validProperties = new Set(Object.keys(common));
+module.exports = new Proxy(common, {
+  get(obj, prop) {
+    if (!validProperties.has(prop))
+      throw new Error(`Using invalid common property: '${prop}'`);
+    return obj[prop];
+  }
+});

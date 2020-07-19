@@ -28,7 +28,6 @@ using fs::GetReqWrap;
 
 using v8::Array;
 using v8::Context;
-using v8::Function;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
@@ -109,9 +108,7 @@ inline void DirHandle::GCClose() {
   if (ret < 0) {
     // Do not unref this
     env()->SetImmediate([detail](Environment* env) {
-      char msg[70];
-      snprintf(msg, arraysize(msg),
-              "Closing directory handle on garbage collection failed");
+      const char* msg = "Closing directory handle on garbage collection failed";
       // This exception will end up being fatal for the process because
       // it is being thrown from within the SetImmediate handler and
       // there is no JS stack to bubble it to. In other words, tearing
@@ -126,10 +123,10 @@ inline void DirHandle::GCClose() {
   // to notify that the file descriptor was gc'd. We want to be noisy about
   // this because not explicitly closing the DirHandle is a bug.
 
-  env()->SetUnrefImmediate([](Environment* env) {
+  env()->SetImmediate([](Environment* env) {
     ProcessEmitWarning(env,
                        "Closing directory handle on garbage collection");
-  });
+  }, CallbackFlags::kUnrefed);
 }
 
 void AfterClose(uv_fs_t* req) {
@@ -152,7 +149,7 @@ void DirHandle::Close(const FunctionCallbackInfo<Value>& args) {
   dir->closing_ = false;
   dir->closed_ = true;
 
-  FSReqBase* req_wrap_async = GetReqWrap(env, args[0]);
+  FSReqBase* req_wrap_async = GetReqWrap(args, 0);
   if (req_wrap_async != nullptr) {  // close(req)
     AsyncCall(env, req_wrap_async, args, "closedir", UTF8, AfterClose,
               uv_fs_closedir, dir->dir());
@@ -197,8 +194,8 @@ static MaybeLocal<Array> DirentListToArray(
 }
 
 static void AfterDirRead(uv_fs_t* req) {
-  FSReqBase* req_wrap = FSReqBase::from_req(req);
-  FSReqAfterScope after(req_wrap, req);
+  BaseObjectPtr<FSReqBase> req_wrap { FSReqBase::from_req(req) };
+  FSReqAfterScope after(req_wrap.get(), req);
 
   if (!after.Proceed()) {
     return;
@@ -210,12 +207,12 @@ static void AfterDirRead(uv_fs_t* req) {
   if (req->result == 0) {
     // Done
     Local<Value> done = Null(isolate);
+    after.Clear();
     req_wrap->Resolve(done);
     return;
   }
 
   uv_dir_t* dir = static_cast<uv_dir_t*>(req->ptr);
-  req->ptr = nullptr;
 
   Local<Value> error;
   Local<Array> js_array;
@@ -224,9 +221,13 @@ static void AfterDirRead(uv_fs_t* req) {
                          req->result,
                          req_wrap->encoding(),
                          &error).ToLocal(&js_array)) {
+    // Clear libuv resources *before* delivering results to JS land because
+    // that can schedule another operation on the same uv_dir_t. Ditto below.
+    after.Clear();
     return req_wrap->Reject(error);
   }
 
+  after.Clear();
   req_wrap->Resolve(js_array);
 }
 
@@ -252,7 +253,7 @@ void DirHandle::Read(const FunctionCallbackInfo<Value>& args) {
     dir->dir_->dirents = dir->dirents_.data();
   }
 
-  FSReqBase* req_wrap_async = GetReqWrap(env, args[2]);
+  FSReqBase* req_wrap_async = GetReqWrap(args, 2);
   if (req_wrap_async != nullptr) {  // dir.read(encoding, bufferSize, req)
     AsyncCall(env, req_wrap_async, args, "readdir", encoding,
               AfterDirRead, uv_fs_readdir, dir->dir());
@@ -320,7 +321,7 @@ static void OpenDir(const FunctionCallbackInfo<Value>& args) {
 
   const enum encoding encoding = ParseEncoding(isolate, args[1], UTF8);
 
-  FSReqBase* req_wrap_async = GetReqWrap(env, args[2]);
+  FSReqBase* req_wrap_async = GetReqWrap(args, 2);
   if (req_wrap_async != nullptr) {  // openDir(path, encoding, req)
     AsyncCall(env, req_wrap_async, args, "opendir", encoding, AfterOpenDir,
               uv_fs_opendir, *path);
@@ -358,7 +359,7 @@ void Initialize(Local<Object> target,
   env->SetProtoMethod(dir, "read", DirHandle::Read);
   env->SetProtoMethod(dir, "close", DirHandle::Close);
   Local<ObjectTemplate> dirt = dir->InstanceTemplate();
-  dirt->SetInternalFieldCount(DirHandle::kDirHandleFieldCount);
+  dirt->SetInternalFieldCount(DirHandle::kInternalFieldCount);
   Local<String> handleString =
        FIXED_ONE_BYTE_STRING(isolate, "DirHandle");
   dir->SetClassName(handleString);

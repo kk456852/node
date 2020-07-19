@@ -70,7 +70,7 @@
     }],
     [ 'node_use_bundled_v8=="true"', {
       'dependencies': [
-        'tools/v8_gypfiles/v8.gyp:v8_maybe_snapshot',
+        'tools/v8_gypfiles/v8.gyp:v8_snapshot',
         'tools/v8_gypfiles/v8.gyp:v8_libplatform',
       ],
     }],
@@ -186,6 +186,24 @@
     [ 'node_shared_nghttp2=="false"', {
       'dependencies': [ 'deps/nghttp2/nghttp2.gyp:nghttp2' ],
     }],
+
+    [
+      'experimental_quic==1', {
+      'conditions': [
+        [
+          'node_shared_ngtcp2=="false"', {
+          'dependencies': [
+            'deps/ngtcp2/ngtcp2.gyp:ngtcp2',
+          ]}
+        ],
+        [
+          'node_shared_nghttp3=="false"', {
+          'dependencies': [
+            'deps/nghttp3/nghttp3.gyp:nghttp3'
+          ]}
+        ]
+      ]}
+    ],
 
     [ 'node_shared_brotli=="false"', {
       'dependencies': [ 'deps/brotli/brotli.gyp:brotli' ],

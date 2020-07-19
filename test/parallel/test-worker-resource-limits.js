@@ -12,6 +12,7 @@ const testResourceLimits = {
   maxOldGenerationSizeMb: 16,
   maxYoungGenerationSizeMb: 4,
   codeRangeSizeMb: 16,
+  stackSizeMb: 1,
 };
 
 // Do not use isMainThread so that this test itself can be run inside a Worker.
@@ -25,7 +26,8 @@ if (!process.env.HAS_STARTED_WORKER) {
   }));
   w.on('error', common.expectsError({
     code: 'ERR_WORKER_OUT_OF_MEMORY',
-    message: 'Worker terminated due to reaching memory limit'
+    message: 'Worker terminated due to reaching memory limit: ' +
+    'JS heap out of memory'
   }));
   return;
 }

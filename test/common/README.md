@@ -21,6 +21,7 @@ This directory contains modules used to test the Node.js implementation.
 * [Report module](#report-module)
 * [tick module](#tick-module)
 * [tmpdir module](#tmpdir-module)
+* [UDP pair helper](#udp-pair-helper)
 * [WPT module](#wpt-module)
 
 ## Benchmark Module
@@ -67,6 +68,13 @@ after a tick. The handler is useful for tests that use Promises and need to make
 sure no unexpected rejections occur, because currently they result in silent
 failures. However, it is useful in some rare cases to disable it, for example if
 the `unhandledRejection` hook is directly used by the test.
+
+### `enoughTestCpu`
+
+* [&lt;boolean>][]
+
+Indicates if there is more than 1 CPU or that the single CPU has a speed of at
+least 1 GHz.
 
 ### `enoughTestMem`
 
@@ -215,6 +223,10 @@ Platform check for Advanced Interactive eXecutive (AIX).
 * return [&lt;boolean>][]
 
 Attempts to 'kill' `pid`
+
+### `isDumbTerminal`
+
+* [&lt;boolean>][]
 
 ### `isFreeBSD`
 
@@ -377,6 +389,10 @@ will not be run.
 * `msg` [&lt;string>][]
 
 Logs '1..0 # Skipped: ' + `msg` and exits with exit code `0`.
+
+### `skipIfDumbTerminal()`
+
+Skip the rest of the tests if the current terminal is a dumb terminal
 
 ### `skipIfEslintMissing()`
 
@@ -927,6 +943,19 @@ be closed before the test completes. A good way to do this is to add a
 listener to process `'beforeExit'`. If a file needs to be left open until
 Node.js completes, use a child process and call `refresh()` only in the
 parent.
+
+## UDP pair helper
+
+The `common/udppair` module exports a function `makeUDPPair` and a class
+`FakeUDPWrap`.
+
+`FakeUDPWrap` emits `'send'` events when data is to be sent on it, and provides
+an `emitReceived()` API for actin as if data has been received on it.
+
+`makeUDPPair` returns an object `{ clientSide, serverSide }` where each side
+is an `FakeUDPWrap` connected to the other side.
+
+There is no difference between cient or server side beyond their names.
 
 ## WPT Module
 

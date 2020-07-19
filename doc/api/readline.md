@@ -4,6 +4,8 @@
 
 > Stability: 2 - Stable
 
+<!-- source_link=lib/readline.js -->
+
 The `readline` module provides an interface for reading data from a [Readable][]
 stream (such as [`process.stdin`][]) one line at a time. It can be accessed
 using:
@@ -315,9 +317,13 @@ The `rl.write()` method will write the data to the `readline` `Interface`'s
 
 ### `rl[Symbol.asyncIterator]()`
 <!-- YAML
-added: v11.4.0
+added:
+ - v11.4.0
+ - v10.16.0
 changes:
-  - version: v11.14.0
+  - version:
+     - v11.14.0
+     - v10.17.0
     pr-url: https://github.com/nodejs/node/pull/26989
     description: Symbol.asyncIterator support is no longer experimental.
 -->
@@ -352,7 +358,7 @@ async function processLineByLine() {
 
 ### `rl.line`
 <!-- YAML
-added: 0.1.98
+added: v0.1.98
 -->
 
 * {string|undefined}
@@ -361,7 +367,7 @@ The current input data being processed by node.
 
 This can be used when collecting input from a TTY stream to retrieve the
 current value that has been processed thus far, prior to the `line` event
-being emitted.  Once the `line` event has been emitted, this property will
+being emitted. Once the `line` event has been emitted, this property will
 be an empty string.
 
 Be aware that modifying the value during the instance runtime may have
@@ -387,7 +393,7 @@ process.stdin.on('keypress', (c, k) => {
 
 ### `rl.cursor`
 <!-- YAML
-added: 0.1.98
+added: v0.1.98
 -->
 
 * {number|undefined}
@@ -395,13 +401,15 @@ added: 0.1.98
 The cursor position relative to `rl.line`.
 
 This will track where the current cursor lands in the input string, when
-reading input from a TTY stream.  The position of cursor determines the
+reading input from a TTY stream. The position of cursor determines the
 portion of the input string that will be modified as input is processed,
 as well as the column where the terminal caret will be rendered.
 
 ### `rl.getCursorPos()`
 <!-- YAML
-added: v13.5.0
+added:
+ - v13.5.0
+ - v12.16.0
 -->
 
 * Returns: {Object}
@@ -409,7 +417,7 @@ added: v13.5.0
   * `cols` {number} the screen column the cursor currently lands on
 
 Returns the real position of the cursor in relation to the input
-prompt + string.  Long input (wrapping) strings, as well as multiple
+prompt + string. Long input (wrapping) strings, as well as multiple
 line prompts are included in the calculations.
 
 ## `readline.clearLine(stream, dir[, callback])`
@@ -456,7 +464,7 @@ the current position of the cursor down.
 <!-- YAML
 added: v0.1.98
 changes:
-  - version: REPLACEME
+  - version: v13.9.0
     pr-url: https://github.com/nodejs/node/pull/31318
     description: The `tabSize` option is supported now.
   - version: v8.3.0, 6.11.4
@@ -530,7 +538,7 @@ the best compatibility if it defines an `output.columns` property and emits
 a `'resize'` event on the `output` if or when the columns ever change
 ([`process.stdout`][] does this automatically when it is a TTY).
 
-### Use of the `completer` Function
+### Use of the `completer` function
 
 The `completer` function takes the current line entered by the user
 as an argument, and returns an `Array` with 2 entries:
@@ -655,7 +663,7 @@ rl.on('line', (line) => {
 });
 ```
 
-## Example: Read File Stream Line-by-Line
+## Example: Read file stream line-by-Line
 
 A common use case for `readline` is to consume an input file one line at a
 time. The easiest way to do so is leveraging the [`fs.ReadStream`][] API as
@@ -744,7 +752,7 @@ const { createInterface } = require('readline');
   <tr>
     <td><code>ctrl</code> + <code>shift</code> + <code>delete</code></td>
     <td>Delete line right</td>
-    <td>Doesn't work on Linux and Mac</td>
+    <td>Doesn't work on Mac</td>
   </tr>
   <tr>
     <td><code>ctrl</code> + <code>c</code></td>
@@ -818,7 +826,7 @@ const { createInterface } = require('readline');
     + <code>backspace</code></td>
     <td>Delete backwards to a word boundary</td>
     <td><code>ctrl</code> + <code>backspace</code> Doesn't
-    work as expected on Windows</td>
+    work on Linux, Mac and Windows</td>
   </tr>
   <tr>
     <td><code>ctrl</code> + <code>delete</code></td>

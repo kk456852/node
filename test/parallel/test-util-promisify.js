@@ -35,6 +35,21 @@ const stat = promisify(fs.stat);
 
 {
   function fn() {}
+
+  function promisifiedFn() {}
+
+  // util.promisify.custom is a shared symbol which can be accessed
+  // as `Symbol.for("nodejs.util.promisify.custom")`.
+  const kCustomPromisifiedSymbol = Symbol.for('nodejs.util.promisify.custom');
+  fn[kCustomPromisifiedSymbol] = promisifiedFn;
+
+  assert.strictEqual(kCustomPromisifiedSymbol, promisify.custom);
+  assert.strictEqual(promisify(fn), promisifiedFn);
+  assert.strictEqual(promisify(promisify(fn)), promisifiedFn);
+}
+
+{
+  function fn() {}
   fn[promisify.custom] = 42;
   assert.throws(
     () => promisify(fn),
@@ -128,9 +143,7 @@ const stat = promisify(fs.stat);
 
   o.fn = fn;
 
-  o.fn().then(common.mustCall(function(val) {
-    assert(val);
-  }));
+  o.fn().then(common.mustCall((val) => assert(val)));
 }
 
 {

@@ -1,7 +1,8 @@
 #include "env-inl.h"
+#include "node_external_reference.h"
 #include "node_internals.h"
-#include "node_options-inl.h"
 #include "node_metadata.h"
+#include "node_options-inl.h"
 #include "node_process.h"
 #include "node_revert.h"
 #include "util-inl.h"
@@ -15,10 +16,8 @@ using v8::EscapableHandleScope;
 using v8::Function;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
-using v8::HandleScope;
 using v8::Integer;
 using v8::Isolate;
-using v8::Just;
 using v8::Local;
 using v8::MaybeLocal;
 using v8::Name;
@@ -147,7 +146,7 @@ void PatchProcessObject(const FunctionCallbackInfo<Value>& args) {
                 FIXED_ONE_BYTE_STRING(isolate, "title"),
                 ProcessTitleGetter,
                 env->owns_process_state() ? ProcessTitleSetter : nullptr,
-                env->as_callback_data(),
+                Local<Value>(),
                 DEFAULT,
                 None,
                 SideEffectType::kHasNoSideEffect)
@@ -198,8 +197,15 @@ void PatchProcessObject(const FunctionCallbackInfo<Value>& args) {
                           FIXED_ONE_BYTE_STRING(isolate, "debugPort"),
                           DebugPortGetter,
                           env->owns_process_state() ? DebugPortSetter : nullptr,
-                          env->as_callback_data())
+                          Local<Value>())
             .FromJust());
 }
 
+void RegisterProcessExternalReferences(ExternalReferenceRegistry* registry) {
+  registry->Register(RawDebug);
+}
+
 }  // namespace node
+
+NODE_MODULE_EXTERNAL_REFERENCE(process_object,
+                               node::RegisterProcessExternalReferences)

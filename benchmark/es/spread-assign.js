@@ -15,11 +15,9 @@ function main({ n, context, count, rest, method }) {
   for (let n = 0; n < count; n++)
     src[`p${n}`] = n;
 
-  let obj;  // eslint-disable-line no-unused-vars
+  let obj;
 
   switch (method) {
-    case '':
-      // Empty string falls through to next line as default, mostly for tests.
     case '_extend':
       bench.start();
       for (let i = 0; i < n; i++)
@@ -35,7 +33,7 @@ function main({ n, context, count, rest, method }) {
     case 'spread':
       bench.start();
       for (let i = 0; i < n; i++)
-        obj = { ...src };
+        obj = { ...src }; // eslint-disable-line no-unused-vars
       bench.end(n);
       break;
     default:

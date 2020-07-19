@@ -16,11 +16,10 @@ function makeTest(count, rest) {
     return function test(...args) {
       assert.strictEqual(count, args.length);
     };
-  } else {
-    return function test() {
-      assert.strictEqual(count, arguments.length);
-    };
   }
+  return function test() {
+    assert.strictEqual(count, arguments.length);
+  };
 }
 
 function main({ n, context, count, rest, method }) {
@@ -32,8 +31,6 @@ function main({ n, context, count, rest, method }) {
     args[i] = i;
 
   switch (method) {
-    case '':
-      // Empty string falls through to next line as default, mostly for tests.
     case 'apply':
       bench.start();
       for (let i = 0; i < n; i++)

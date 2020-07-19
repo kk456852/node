@@ -607,8 +607,9 @@ void SyncProcessRunner::Kill() {
     if (r < 0 && r != UV_ESRCH) {
       SetError(r);
 
-      r = uv_process_kill(&uv_process_, SIGKILL);
-      CHECK(r >= 0 || r == UV_ESRCH);
+      // Deliberately ignore the return value, we might not have
+      // sufficient privileges to signal the child process.
+      USE(uv_process_kill(&uv_process_, SIGKILL));
     }
   }
 
@@ -694,8 +695,7 @@ Local<Object> SyncProcessRunner::BuildResultObject() {
   if (term_signal_ > 0)
     js_result->Set(context, env()->signal_string(),
                    String::NewFromUtf8(env()->isolate(),
-                                       signo_string(term_signal_),
-                                       v8::NewStringType::kNormal)
+                                       signo_string(term_signal_))
                        .ToLocalChecked())
         .Check();
   else
@@ -721,18 +721,18 @@ Local<Array> SyncProcessRunner::BuildOutputArray() {
   CHECK(!stdio_pipes_.empty());
 
   EscapableHandleScope scope(env()->isolate());
-  Local<Context> context = env()->context();
-  Local<Array> js_output = Array::New(env()->isolate(), stdio_count_);
+  MaybeStackBuffer<Local<Value>, 8> js_output(stdio_pipes_.size());
 
   for (uint32_t i = 0; i < stdio_pipes_.size(); i++) {
     SyncProcessStdioPipe* h = stdio_pipes_[i].get();
     if (h != nullptr && h->writable())
-      js_output->Set(context, i, h->GetOutputAsBuffer(env())).Check();
+      js_output[i] = h->GetOutputAsBuffer(env());
     else
-      js_output->Set(context, i, Null(env()->isolate())).Check();
+      js_output[i] = Null(env()->isolate());
   }
 
-  return scope.Escape(js_output);
+  return scope.Escape(
+      Array::New(env()->isolate(), js_output.out(), js_output.length()));
 }
 
 Maybe<int> SyncProcessRunner::ParseOptions(Local<Value> js_value) {
@@ -1039,8 +1039,7 @@ Maybe<int> SyncProcessRunner::CopyJsStringArray(Local<Value> js_value,
       js_array
           ->Set(context,
                 i,
-                value->ToString(env()->isolate()->GetCurrentContext())
-                    .ToLocalChecked())
+                string)
           .Check();
     }
 

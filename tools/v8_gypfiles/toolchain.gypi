@@ -64,9 +64,6 @@
     # Print to stdout on Android.
     'v8_android_log_stdout%': 0,
 
-    # Force disable libstdc++ debug mode.
-    'disable_glibcxx_debug%': 0,
-
     'v8_enable_backtrace%': 0,
 
     # Enable profiling support. Only required on Windows.
@@ -301,11 +298,17 @@
         'defines': [
           'V8_TARGET_ARCH_ARM64',
         ],
+        'conditions': [
+          ['v8_control_flow_integrity==1', {
+            'cflags': [ '-mbranch-protection=standard' ],
+          }],
+        ],
       }],
       ['v8_target_arch=="s390x"', {
         'defines': [
           'V8_TARGET_ARCH_S390',
         ],
+        'cflags': [ '-ffp-contract=off' ],
         'conditions': [
           ['v8_target_arch=="s390x"', {
             'defines': [
@@ -322,10 +325,12 @@
           ],
       }],  # s390x
       ['v8_target_arch=="ppc" or v8_target_arch=="ppc64"', {
-        'defines': [
-          'V8_TARGET_ARCH_PPC',
-        ],
         'conditions': [
+          ['v8_target_arch=="ppc"', {
+            'defines': [
+              'V8_TARGET_ARCH_PPC',
+            ],
+          }],
           ['v8_target_arch=="ppc64"', {
             'defines': [
               'V8_TARGET_ARCH_PPC64',
@@ -1166,11 +1171,6 @@
           ['OS=="linux" and v8_enable_backtrace==1', {
             # Support for backtrace_symbols.
             'ldflags': [ '-rdynamic' ],
-          }],
-          ['OS=="linux" and disable_glibcxx_debug==0', {
-            # Enable libstdc++ debugging facilities to help catch problems
-            # early, see http://crbug.com/65151 .
-            'defines': ['_GLIBCXX_DEBUG=1',],
           }],
           ['OS=="aix"', {
             'ldflags': [ '-Wl,-bbigtoc' ],

@@ -26,20 +26,17 @@
     'uv_library%': 'static_library',
 
     'clang%': 0,
+    'error_on_warn%': 'false',
 
     'openssl_fips%': '',
     'openssl_no_asm%': 0,
-
-    # Some STL containers (e.g. std::vector) do not preserve ABI compatibility
-    # between debug and non-debug mode.
-    'disable_glibcxx_debug': 1,
 
     # Don't use ICU data file (icudtl.dat) from V8, we use our own.
     'icu_use_data_file_flag%': 0,
 
     # Reset this number to 0 on major V8 upgrades.
     # Increment by one for each non-official patch applied to deps/v8.
-    'v8_embedder_string': '-node.29',
+    'v8_embedder_string': '-node.13',
 
     ##### V8 defaults for Node.js #####
 
@@ -59,6 +56,12 @@
 
     # https://github.com/nodejs/node/pull/22920/files#r222779926
     'v8_enable_handle_zapping': 0,
+
+    # Disable pointer compression. Can be enabled at build time via configure
+    # options but default values are required here as this file is also used by
+    # node-gyp to build addons.
+    'v8_enable_pointer_compression%': 0,
+    'v8_enable_31bit_smis_on_64bit_arch%': 0,
 
     # Disable V8 untrusted code mitigations.
     # See https://github.com/v8/v8/wiki/Untrusted-code-mitigations
@@ -101,6 +104,9 @@
         'clang%': 1,
         'obj_dir%': '<(PRODUCT_DIR)/obj.target',
         'v8_base': '<(PRODUCT_DIR)/libv8_snapshot.a',
+      }],
+      ['target_arch in "ppc64 s390x"', {
+        'v8_enable_backtrace': 1,
       }],
     ],
   },
@@ -193,6 +199,11 @@
         ],
         'msvs_settings': {
           'VCCLCompilerTool': {
+            'conditions': [
+              ['target_arch=="arm64"', {
+                'FloatingPointModel': 1 # /fp:strict
+              }]
+            ],
             'EnableFunctionLevelLinking': 'true',
             'EnableIntrinsicFunctions': 'true',
             'FavorSizeOrSpeed': 1,          # /Ot, favor speed over size
@@ -219,7 +230,14 @@
     # Forcibly disable -Werror.  We support a wide range of compilers, it's
     # simply not feasible to squelch all warnings, never mind that the
     # libraries in deps/ are not under our control.
-    'cflags!': ['-Werror'],
+    'conditions': [
+      [ 'error_on_warn=="false"', {
+        'cflags!': ['-Werror'],
+      }, '(_target_name!="<(node_lib_target_name)" or '
+          '_target_name!="<(node_core_target_name)")', {
+        'cflags!': ['-Werror'],
+      }],
+    ],
     'msvs_settings': {
       'VCCLCompilerTool': {
         'BufferSecurityCheck': 'true',
@@ -285,8 +303,9 @@
         'cflags+': [
           '-fno-omit-frame-pointer',
           '-fsanitize=address',
-          '-DLEAK_SANITIZER'
+          '-fsanitize-address-use-after-scope',
         ],
+        'defines': [ 'LEAK_SANITIZER', 'V8_USE_ADDRESS_SANITIZER' ],
         'cflags!': [ '-fomit-frame-pointer' ],
         'ldflags': [ '-fsanitize=address' ],
       }],
@@ -402,6 +421,15 @@
               '-Wl,-brtl',
             ],
           }, {                                             # else it's `AIX`
+            # Disable the following compiler warning:
+            #
+            #   warning: visibility attribute not supported in this
+            #   configuration; ignored [-Wattributes]
+            #
+            # This is gcc complaining about __attribute((visibility("default"))
+            # in static library builds. Legitimate but harmless and it drowns
+            # out more relevant warnings.
+            'cflags': [ '-Wno-attributes' ],
             'ldflags': [
               '-Wl,-blibpath:/usr/lib:/lib:/opt/freeware/lib/pthread/ppc64',
             ],
@@ -413,6 +441,10 @@
           ['_toolset=="target"', {
             'defines': [ '_GLIBCXX_USE_C99_MATH' ],
             'libraries': [ '-llog' ],
+          }],
+          ['_toolset=="host"', {
+            'cflags': [ '-pthread' ],
+            'ldflags': [ '-pthread' ],
           }],
         ],
       }],
@@ -427,7 +459,7 @@
           'GCC_ENABLE_CPP_RTTI': 'NO',              # -fno-rtti
           'GCC_ENABLE_PASCAL_STRINGS': 'NO',        # No -mpascal-strings
           'PREBINDING': 'NO',                       # No -Wl,-prebind
-          'MACOSX_DEPLOYMENT_TARGET': '10.10',      # -mmacosx-version-min=10.10
+          'MACOSX_DEPLOYMENT_TARGET': '10.13',      # -mmacosx-version-min=10.13
           'USE_HEADERMAP': 'NO',
           'OTHER_CFLAGS': [
             '-fno-strict-aliasing',

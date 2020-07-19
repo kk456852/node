@@ -3,11 +3,10 @@
 
 #include "debug_utils-inl.h"
 #include "node_errors.h"
+#include "node_external_reference.h"
 #include "node_internals.h"
-#ifdef NODE_REPORT
-#include "node_report.h"
-#endif
 #include "node_process.h"
+#include "node_report.h"
 #include "node_v8_platform-inl.h"
 #include "util-inl.h"
 
@@ -27,7 +26,6 @@ using v8::Local;
 using v8::Maybe;
 using v8::MaybeLocal;
 using v8::Message;
-using v8::Number;
 using v8::Object;
 using v8::ScriptOrigin;
 using v8::StackFrame;
@@ -58,9 +56,18 @@ static std::string GetErrorSource(Isolate* isolate,
   MaybeLocal<String> source_line_maybe = message->GetSourceLine(context);
   node::Utf8Value encoded_source(isolate, source_line_maybe.ToLocalChecked());
   std::string sourceline(*encoded_source, encoded_source.length());
+  *added_exception_line = false;
+
+  // If source maps have been enabled, the exception line will instead be
+  // added in the JavaScript context:
+  Environment* env = Environment::GetCurrent(isolate);
+  const bool has_source_map_url =
+      !message->GetScriptOrigin().SourceMapUrl().IsEmpty();
+  if (has_source_map_url && env->source_maps_enabled()) {
+    return sourceline;
+  }
 
   if (sourceline.find("node-do-not-add-exception-line") != std::string::npos) {
-    *added_exception_line = false;
     return sourceline;
   }
 
@@ -107,6 +114,13 @@ static std::string GetErrorSource(Isolate* isolate,
                             linenum,
                             sourceline.c_str());
   CHECK_GT(buf.size(), 0);
+  *added_exception_line = true;
+
+  if (start > end ||
+      start < 0 ||
+      static_cast<size_t>(end) > sourceline.size()) {
+    return buf;
+  }
 
   constexpr int kUnderlineBufsize = 1020;
   char underline_buf[kUnderlineBufsize + 4];
@@ -129,7 +143,6 @@ static std::string GetErrorSource(Isolate* isolate,
   CHECK_LE(off, kUnderlineBufsize);
   underline_buf[off++] = '\n';
 
-  *added_exception_line = true;
   return buf + std::string(underline_buf, off);
 }
 
@@ -377,8 +390,13 @@ static void ReportFatalException(Environment* env,
     }
 
     if (!env->options()->trace_uncaught) {
-      FPrintF(stderr, "(Use `node --trace-uncaught ...` to show "
-                      "where the exception was thrown)\n");
+      std::string argv0;
+      if (!env->argv().empty()) argv0 = env->argv()[0];
+      if (argv0.empty()) argv0 = "node";
+      FPrintF(stderr,
+              "(Use `%s --trace-uncaught ...` to show where the exception "
+              "was thrown)\n",
+              fs::Basename(argv0, ".exe"));
     }
   }
 
@@ -405,14 +423,20 @@ void OnFatalError(const char* location, const char* message) {
   } else {
     FPrintF(stderr, "FATAL ERROR: %s\n", message);
   }
-#ifdef NODE_REPORT
+
   Isolate* isolate = Isolate::GetCurrent();
   Environment* env = Environment::GetCurrent(isolate);
-  if (env == nullptr || env->isolate_data()->options()->report_on_fatalerror) {
-    report::TriggerNodeReport(
-        isolate, env, message, "FatalError", "", Local<String>());
+  bool report_on_fatalerror;
+  {
+    Mutex::ScopedLock lock(node::per_process::cli_options_mutex);
+    report_on_fatalerror = per_process::cli_options->report_on_fatalerror;
   }
-#endif  // NODE_REPORT
+
+  if (report_on_fatalerror) {
+    report::TriggerNodeReport(
+        isolate, env, message, "FatalError", "", Local<Object>());
+  }
+
   fflush(stderr);
   ABORT();
 }
@@ -793,6 +817,11 @@ void SetPrepareStackTraceCallback(const FunctionCallbackInfo<Value>& args) {
   env->set_prepare_stack_trace_callback(args[0].As<Function>());
 }
 
+static void EnableSourceMaps(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  env->set_source_maps_enabled(true);
+}
+
 static void SetEnhanceStackForFatalException(
     const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
@@ -824,6 +853,14 @@ static void TriggerUncaughtException(const FunctionCallbackInfo<Value>& args) {
   errors::TriggerUncaughtException(isolate, exception, message, from_promise);
 }
 
+void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
+  registry->Register(SetPrepareStackTraceCallback);
+  registry->Register(EnableSourceMaps);
+  registry->Register(SetEnhanceStackForFatalException);
+  registry->Register(NoSideEffectsToString);
+  registry->Register(TriggerUncaughtException);
+}
+
 void Initialize(Local<Object> target,
                 Local<Value> unused,
                 Local<Context> context,
@@ -831,6 +868,7 @@ void Initialize(Local<Object> target,
   Environment* env = Environment::GetCurrent(context);
   env->SetMethod(
       target, "setPrepareStackTraceCallback", SetPrepareStackTraceCallback);
+  env->SetMethod(target, "enableSourceMaps", EnableSourceMaps);
   env->SetMethod(target,
                  "setEnhanceStackForFatalException",
                  SetEnhanceStackForFatalException);
@@ -994,3 +1032,4 @@ void TriggerUncaughtException(Isolate* isolate, const v8::TryCatch& try_catch) {
 }  // namespace node
 
 NODE_MODULE_CONTEXT_AWARE_INTERNAL(errors, node::errors::Initialize)
+NODE_MODULE_EXTERNAL_REFERENCE(errors, node::errors::RegisterExternalReferences)

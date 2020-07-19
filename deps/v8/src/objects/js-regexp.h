@@ -84,16 +84,23 @@ class JSRegExp : public TorqueGeneratedJSRegExp<JSRegExp, JSObject> {
 
   DECL_ACCESSORS(last_index, Object)
 
-  V8_EXPORT_PRIVATE static MaybeHandle<JSRegExp> New(Isolate* isolate,
-                                                     Handle<String> source,
-                                                     Flags flags);
+  // If the backtrack limit is set to this marker value, no limit is applied.
+  static constexpr uint32_t kNoBacktrackLimit = 0;
+
+  V8_EXPORT_PRIVATE static MaybeHandle<JSRegExp> New(
+      Isolate* isolate, Handle<String> source, Flags flags,
+      uint32_t backtrack_limit = kNoBacktrackLimit);
   static Handle<JSRegExp> Copy(Handle<JSRegExp> regexp);
 
-  static MaybeHandle<JSRegExp> Initialize(Handle<JSRegExp> regexp,
-                                          Handle<String> source, Flags flags);
+  static MaybeHandle<JSRegExp> Initialize(
+      Handle<JSRegExp> regexp, Handle<String> source, Flags flags,
+      uint32_t backtrack_limit = kNoBacktrackLimit);
   static MaybeHandle<JSRegExp> Initialize(Handle<JSRegExp> regexp,
                                           Handle<String> source,
                                           Handle<String> flags_string);
+
+  static Flags FlagsFromString(Isolate* isolate, Handle<String> flags,
+                               bool* success);
 
   bool MarkedForTierUp();
   void ResetLastTierUpTick();
@@ -106,7 +113,11 @@ class JSRegExp : public TorqueGeneratedJSRegExp<JSRegExp, JSObject> {
   static constexpr int kMaxCaptures = 1 << 16;
 
   // Number of captures (without the match itself).
-  inline int CaptureCount();
+  inline int CaptureCount() const;
+  // Each capture (including the match itself) needs two registers.
+  static int RegistersForCaptureCount(int count) { return (count + 1) * 2; }
+
+  inline int MaxRegisterCount() const;
   inline Flags GetFlags();
   inline String Pattern();
   inline Object CaptureNameMap();
@@ -124,12 +135,15 @@ class JSRegExp : public TorqueGeneratedJSRegExp<JSRegExp, JSObject> {
   }
 
   // This could be a Smi kUninitializedValue or Code.
-  Object Code(bool is_latin1) const;
+  V8_EXPORT_PRIVATE Object Code(bool is_latin1) const;
   // This could be a Smi kUninitializedValue or ByteArray.
-  Object Bytecode(bool is_latin1) const;
+  V8_EXPORT_PRIVATE Object Bytecode(bool is_latin1) const;
+
   bool ShouldProduceBytecode();
   inline bool HasCompiledCode() const;
   inline void DiscardCompiledCodeForSerialization();
+
+  uint32_t BacktrackLimit() const;
 
   // Dispatched behavior.
   DECL_PRINTER(JSRegExp)
@@ -137,7 +151,7 @@ class JSRegExp : public TorqueGeneratedJSRegExp<JSRegExp, JSObject> {
 
   /* This is already an in-object field. */
   // TODO(v8:8944): improve handling of in-object fields
-  static constexpr int kLastIndexOffset = kSize;
+  static constexpr int kLastIndexOffset = kHeaderSize;
 
   // Indices in the data array.
   static const int kTagIndex = 0;
@@ -182,8 +196,11 @@ class JSRegExp : public TorqueGeneratedJSRegExp<JSRegExp, JSObject> {
   // happens once the ticks reach zero.
   // This value is ignored if the regexp-tier-up flag isn't turned on.
   static const int kIrregexpTicksUntilTierUpIndex = kDataIndex + 7;
-
-  static const int kIrregexpDataSize = kIrregexpTicksUntilTierUpIndex + 1;
+  // A smi containing either the backtracking limit or kNoBacktrackLimit.
+  // TODO(jgruber): If needed, this limit could be packed into other fields
+  // above to save space.
+  static const int kIrregexpBacktrackLimit = kDataIndex + 8;
+  static const int kIrregexpDataSize = kDataIndex + 9;
 
   // In-object fields.
   static const int kLastIndexFieldIndex = 0;
@@ -223,16 +240,11 @@ class JSRegExpResult : public JSArray {
   // JSRegExpResult, and maybe JSRegExpResultIndices, but both have the same
   // instance type as JSArray.
 
-  // cached_indices_or_match_info and names, are used to construct the
-  // JSRegExpResultIndices returned from the indices property lazily.
-  DECL_ACCESSORS(cached_indices_or_match_info, Object)
-  DECL_ACCESSORS(names, Object)
-
   // Layout description.
-  DEFINE_FIELD_OFFSET_CONSTANTS(JSArray::kSize,
+  DEFINE_FIELD_OFFSET_CONSTANTS(JSArray::kHeaderSize,
                                 TORQUE_GENERATED_JS_REG_EXP_RESULT_FIELDS)
 
-  static Handle<JSArray> GetAndCacheIndices(
+  static MaybeHandle<JSArray> GetAndCacheIndices(
       Isolate* isolate, Handle<JSRegExpResult> regexp_result);
 
   // Indices of in-object properties.
@@ -241,9 +253,11 @@ class JSRegExpResult : public JSArray {
   static const int kGroupsIndex = 2;
 
   // Private internal only fields.
-  static const int kCachedIndicesOrMatchInfoIndex = 3;
+  static const int kCachedIndicesOrRegExpIndex = 3;
   static const int kNamesIndex = 4;
-  static const int kInObjectPropertyCount = 5;
+  static const int kRegExpInputIndex = 5;
+  static const int kRegExpLastIndex = 6;
+  static const int kInObjectPropertyCount = 7;
 
   OBJECT_CONSTRUCTORS(JSRegExpResult, JSArray);
 };
@@ -260,7 +274,7 @@ class JSRegExpResultIndices : public JSArray {
 
   // Layout description.
   DEFINE_FIELD_OFFSET_CONSTANTS(
-      JSArray::kSize, TORQUE_GENERATED_JS_REG_EXP_RESULT_INDICES_FIELDS)
+      JSArray::kHeaderSize, TORQUE_GENERATED_JS_REG_EXP_RESULT_INDICES_FIELDS)
 
   static Handle<JSRegExpResultIndices> BuildIndices(
       Isolate* isolate, Handle<RegExpMatchInfo> match_info,

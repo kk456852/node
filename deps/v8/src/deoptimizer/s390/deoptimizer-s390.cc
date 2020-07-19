@@ -10,8 +10,9 @@
 namespace v8 {
 namespace internal {
 
-const bool Deoptimizer::kSupportsFixedDeoptExitSize = false;
-const int Deoptimizer::kDeoptExitSize = 0;
+const bool Deoptimizer::kSupportsFixedDeoptExitSizes = false;
+const int Deoptimizer::kNonLazyDeoptExitSize = 0;
+const int Deoptimizer::kLazyDeoptExitSize = 0;
 
 #define __ masm->
 
@@ -71,7 +72,7 @@ void Deoptimizer::GenerateDeoptimizationEntries(MacroAssembler* masm,
   Label context_check;
   __ LoadP(r3, MemOperand(fp, CommonFrameConstants::kContextOrFrameTypeOffset));
   __ JumpIfSmi(r3, &context_check);
-  __ LoadP(r2, MemOperand(fp, JavaScriptFrameConstants::kFunctionOffset));
+  __ LoadP(r2, MemOperand(fp, StandardFrameConstants::kFunctionOffset));
   __ bind(&context_check);
   __ LoadImmP(r3, Operand(static_cast<int>(deopt_kind)));
   // r4: bailout id already loaded.
@@ -253,6 +254,8 @@ void FrameDescription::SetCallerConstantPool(unsigned offset, intptr_t value) {
   // No out-of-line constant pool support.
   UNREACHABLE();
 }
+
+void FrameDescription::SetPc(intptr_t pc) { pc_ = pc; }
 
 #undef __
 

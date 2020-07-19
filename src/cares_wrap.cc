@@ -64,6 +64,7 @@ using v8::FunctionTemplate;
 using v8::HandleScope;
 using v8::Int32;
 using v8::Integer;
+using v8::Isolate;
 using v8::Local;
 using v8::Null;
 using v8::Object;
@@ -150,7 +151,7 @@ using node_ares_task_list =
 
 class ChannelWrap : public AsyncWrap {
  public:
-  ChannelWrap(Environment* env, Local<Object> object);
+  ChannelWrap(Environment* env, Local<Object> object, int timeout);
   ~ChannelWrap() override;
 
   static void New(const FunctionCallbackInfo<Value>& args);
@@ -188,18 +189,21 @@ class ChannelWrap : public AsyncWrap {
   bool query_last_ok_;
   bool is_servers_default_;
   bool library_inited_;
+  int timeout_;
   int active_query_count_;
   node_ares_task_list task_list_;
 };
 
 ChannelWrap::ChannelWrap(Environment* env,
-                         Local<Object> object)
+                         Local<Object> object,
+                         int timeout)
   : AsyncWrap(env, object, PROVIDER_DNSCHANNEL),
     timer_handle_(nullptr),
     channel_(nullptr),
     query_last_ok_(true),
     is_servers_default_(true),
     library_inited_(false),
+    timeout_(timeout),
     active_query_count_(0) {
   MakeWeak();
 
@@ -208,10 +212,11 @@ ChannelWrap::ChannelWrap(Environment* env,
 
 void ChannelWrap::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args.IsConstructCall());
-  CHECK_EQ(args.Length(), 0);
-
+  CHECK_EQ(args.Length(), 1);
+  CHECK(args[0]->IsInt32());
+  const int timeout = args[0].As<Int32>()->Value();
   Environment* env = Environment::GetCurrent(args);
-  new ChannelWrap(env, args.This());
+  new ChannelWrap(env, args.This(), timeout);
 }
 
 class GetAddrInfoReqWrap : public ReqWrap<uv_getaddrinfo_t> {
@@ -460,6 +465,7 @@ void ChannelWrap::Setup() {
   options.flags = ARES_FLAG_NOCHECKRESP;
   options.sock_state_cb = ares_sockstate_cb;
   options.sock_state_cb_data = this;
+  options.timeout = timeout_;
 
   int r;
   if (!library_inited_) {
@@ -472,9 +478,9 @@ void ChannelWrap::Setup() {
   }
 
   /* We do the call to ares_init_option for caller. */
-  r = ares_init_options(&channel_,
-                        &options,
-                        ARES_OPT_FLAGS | ARES_OPT_SOCK_STATE_CB);
+  const int optmask =
+      ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB;
+  r = ares_init_options(&channel_, &options, optmask);
 
   if (r != ARES_SUCCESS) {
     Mutex::ScopedLock lock(ares_library_mutex);
@@ -493,7 +499,10 @@ void ChannelWrap::StartTimer() {
   } else if (uv_is_active(reinterpret_cast<uv_handle_t*>(timer_handle_))) {
     return;
   }
-  uv_timer_start(timer_handle_, AresTimeout, 1000, 1000);
+  int timeout = timeout_;
+  if (timeout == 0) timeout = 1;
+  if (timeout < 0 || timeout > 1000) timeout = 1000;
+  uv_timer_start(timer_handle_, AresTimeout, timeout, timeout);
 }
 
 void ChannelWrap::CloseTimer() {
@@ -749,16 +758,12 @@ Local<Array> AddrTTLToArray(Environment* env,
                             const T* addrttls,
                             size_t naddrttls) {
   auto isolate = env->isolate();
-  EscapableHandleScope escapable_handle_scope(isolate);
-  auto context = env->context();
 
-  Local<Array> ttls = Array::New(isolate, naddrttls);
-  for (size_t i = 0; i < naddrttls; i++) {
-    auto value = Integer::NewFromUnsigned(isolate, addrttls[i].ttl);
-    ttls->Set(context, i, value).Check();
-  }
+  MaybeStackBuffer<Local<Value>, 8> ttls(naddrttls);
+  for (size_t i = 0; i < naddrttls; i++)
+    ttls[i] = Integer::NewFromUnsigned(isolate, addrttls[i].ttl);
 
-  return escapable_handle_scope.Escape(ttls);
+  return Array::New(isolate, ttls.out(), naddrttls);
 }
 
 
@@ -1921,7 +1926,7 @@ int ParseIP(const char* ip, ParseIPResult* result = nullptr) {
 }
 
 void CanonicalizeIP(const FunctionCallbackInfo<Value>& args) {
-  v8::Isolate* isolate = args.GetIsolate();
+  Isolate* isolate = args.GetIsolate();
   node::Utf8Value ip(isolate, args[0]);
 
   ParseIPResult result;
@@ -1931,8 +1936,8 @@ void CanonicalizeIP(const FunctionCallbackInfo<Value>& args) {
   char canonical_ip[INET6_ADDRSTRLEN];
   const int af = (rc == 4 ? AF_INET : AF_INET6);
   CHECK_EQ(0, uv_inet_ntop(af, &result, canonical_ip, sizeof(canonical_ip)));
-  v8::Local<String> val = String::NewFromUtf8(isolate, canonical_ip,
-      v8::NewStringType::kNormal).ToLocalChecked();
+  Local<String> val = String::NewFromUtf8(isolate, canonical_ip)
+      .ToLocalChecked();
   args.GetReturnValue().Set(val);
 }
 
@@ -2039,6 +2044,7 @@ void GetServers(const FunctionCallbackInfo<Value>& args) {
 
   int r = ares_get_servers_ports(channel->cares_channel(), &servers);
   CHECK_EQ(r, ARES_SUCCESS);
+  auto cleanup = OnScopeLeave([&]() { ares_free_data(servers); });
 
   ares_addr_port_node* cur = servers;
 
@@ -2049,16 +2055,17 @@ void GetServers(const FunctionCallbackInfo<Value>& args) {
     int err = uv_inet_ntop(cur->family, caddr, ip, sizeof(ip));
     CHECK_EQ(err, 0);
 
-    Local<Array> ret = Array::New(env->isolate(), 2);
-    ret->Set(env->context(), 0, OneByteString(env->isolate(), ip)).Check();
-    ret->Set(env->context(),
-             1,
-             Integer::New(env->isolate(), cur->udp_port)).Check();
+    Local<Value> ret[] = {
+      OneByteString(env->isolate(), ip),
+      Integer::New(env->isolate(), cur->udp_port)
+    };
 
-    server_array->Set(env->context(), i, ret).Check();
+    if (server_array->Set(env->context(), i,
+                          Array::New(env->isolate(), ret, arraysize(ret)))
+          .IsNothing()) {
+      return;
+    }
   }
-
-  ares_free_data(servers);
 
   args.GetReturnValue().Set(server_array);
 }
@@ -2190,6 +2197,9 @@ void Initialize(Local<Object> target,
                                                     "AI_ADDRCONFIG"),
               Integer::New(env->isolate(), AI_ADDRCONFIG)).Check();
   target->Set(env->context(), FIXED_ONE_BYTE_STRING(env->isolate(),
+                                                    "AI_ALL"),
+              Integer::New(env->isolate(), AI_ALL)).Check();
+  target->Set(env->context(), FIXED_ONE_BYTE_STRING(env->isolate(),
                                                     "AI_V4MAPPED"),
               Integer::New(env->isolate(), AI_V4MAPPED)).Check();
 
@@ -2225,7 +2235,8 @@ void Initialize(Local<Object> target,
 
   Local<FunctionTemplate> channel_wrap =
       env->NewFunctionTemplate(ChannelWrap::New);
-  channel_wrap->InstanceTemplate()->SetInternalFieldCount(1);
+  channel_wrap->InstanceTemplate()->SetInternalFieldCount(
+      ChannelWrap::kInternalFieldCount);
   channel_wrap->Inherit(AsyncWrap::GetConstructorTemplate(env));
 
   env->SetProtoMethod(channel_wrap, "queryAny", Query<QueryAnyWrap>);

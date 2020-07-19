@@ -1,12 +1,14 @@
 'use strict';
 
-// Flags: --expose_internals
+// Flags: --expose-internals
 
 const common = require('../common');
 const readline = require('readline');
 const assert = require('assert');
 const EventEmitter = require('events').EventEmitter;
 const { getStringWidth } = require('internal/util/inspect');
+
+common.skipIfDumbTerminal();
 
 // This test verifies that the tab completion supports unicode and the writes
 // are limited to the minimum.

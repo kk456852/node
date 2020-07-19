@@ -1,6 +1,7 @@
 #include "node_url.h"
 #include "base_object-inl.h"
 #include "node_errors.h"
+#include "node_external_reference.h"
 #include "node_i18n.h"
 #include "util-inl.h"
 
@@ -206,7 +207,8 @@ CHAR_TEST(8, IsForbiddenHostCodePoint,
           ch == '\0' || ch == '\t' || ch == '\n' || ch == '\r' ||
           ch == ' ' || ch == '#' || ch == '%' || ch == '/' ||
           ch == ':' || ch == '?' || ch == '@' || ch == '[' ||
-          ch == '\\' || ch == ']')
+          ch == '<' || ch == '>' || ch == '\\' || ch == ']' ||
+          ch == '^')
 
 // https://url.spec.whatwg.org/#windows-drive-letter
 TWO_CHAR_STRING_TEST(8, IsWindowsDriveLetter,
@@ -725,7 +727,6 @@ std::string PercentDecode(const char* input, size_t len) {
 #define SPECIALS(XX)                                                          \
   XX(ftp, 21, "ftp:")                                                         \
   XX(file, -1, "file:")                                                       \
-  XX(gopher, 70, "gopher:")                                                   \
   XX(http, 80, "http:")                                                       \
   XX(https, 443, "https:")                                                    \
   XX(ws, 80, "ws:")                                                           \
@@ -1487,7 +1488,7 @@ void URL::Parse(const char* input,
             state = kSpecialRelativeOrAuthority;
           } else if (special) {
             state = kSpecialAuthoritySlashes;
-          } else if (p[1] == '/') {
+          } else if (p + 1 < end && p[1] == '/') {
             state = kPathOrAuthority;
             p++;
           } else {
@@ -1547,7 +1548,7 @@ void URL::Parse(const char* input,
         }
         break;
       case kSpecialRelativeOrAuthority:
-        if (ch == '/' && p[1] == '/') {
+        if (ch == '/' && p + 1 < end && p[1] == '/') {
           state = kSpecialAuthorityIgnoreSlashes;
           p++;
         } else {
@@ -1695,7 +1696,7 @@ void URL::Parse(const char* input,
         break;
       case kSpecialAuthoritySlashes:
         state = kSpecialAuthorityIgnoreSlashes;
-        if (ch == '/' && p[1] == '/') {
+        if (ch == '/' && p + 1 < end && p[1] == '/') {
           p++;
         } else {
           continue;
@@ -2175,9 +2176,7 @@ void Parse(Environment* env,
     Local<Value> argv[2] = { undef, undef };
     argv[ERR_ARG_FLAGS] = Integer::NewFromUnsigned(isolate, url.flags);
     argv[ERR_ARG_INPUT] =
-      String::NewFromUtf8(env->isolate(),
-                          input,
-                          NewStringType::kNormal).ToLocalChecked();
+      String::NewFromUtf8(env->isolate(), input).ToLocalChecked();
     error_cb.As<Function>()->Call(context, recv, arraysize(argv), argv)
         .FromMaybe(Local<Value>());
   }
@@ -2225,9 +2224,7 @@ void EncodeAuthSet(const FunctionCallbackInfo<Value>& args) {
     AppendOrEscape(&output, ch, USERINFO_ENCODE_SET);
   }
   args.GetReturnValue().Set(
-      String::NewFromUtf8(env->isolate(),
-                          output.c_str(),
-                          NewStringType::kNormal).ToLocalChecked());
+      String::NewFromUtf8(env->isolate(), output.c_str()).ToLocalChecked());
 }
 
 void ToUSVString(const FunctionCallbackInfo<Value>& args) {
@@ -2279,9 +2276,7 @@ void DomainToASCII(const FunctionCallbackInfo<Value>& args) {
   }
   std::string out = host.ToStringMove();
   args.GetReturnValue().Set(
-      String::NewFromUtf8(env->isolate(),
-                          out.c_str(),
-                          NewStringType::kNormal).ToLocalChecked());
+      String::NewFromUtf8(env->isolate(), out.c_str()).ToLocalChecked());
 }
 
 void DomainToUnicode(const FunctionCallbackInfo<Value>& args) {
@@ -2299,9 +2294,7 @@ void DomainToUnicode(const FunctionCallbackInfo<Value>& args) {
   }
   std::string out = host.ToStringMove();
   args.GetReturnValue().Set(
-      String::NewFromUtf8(env->isolate(),
-                          out.c_str(),
-                          NewStringType::kNormal).ToLocalChecked());
+      String::NewFromUtf8(env->isolate(), out.c_str()).ToLocalChecked());
 }
 
 void SetURLConstructor(const FunctionCallbackInfo<Value>& args) {
@@ -2332,6 +2325,15 @@ void Initialize(Local<Object> target,
 #undef XX
 }
 }  // namespace
+
+void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
+  registry->Register(Parse);
+  registry->Register(EncodeAuthSet);
+  registry->Register(ToUSVString);
+  registry->Register(DomainToASCII);
+  registry->Register(DomainToUnicode);
+  registry->Register(SetURLConstructor);
+}
 
 std::string URL::ToFilePath() const {
   if (context_.scheme != "file:") {
@@ -2454,3 +2456,4 @@ MaybeLocal<Value> URL::ToObject(Environment* env) const {
 }  // namespace node
 
 NODE_MODULE_CONTEXT_AWARE_INTERNAL(url, node::url::Initialize)
+NODE_MODULE_EXTERNAL_REFERENCE(url, node::url::RegisterExternalReferences)

@@ -88,6 +88,12 @@ addlicense "gtest" "test/cctest/gtest" "$(cat ${rootdir}/test/cctest/gtest/LICEN
 # nghttp2
 addlicense "nghttp2" "deps/nghttp2" "$(cat ${rootdir}/deps/nghttp2/COPYING)"
 
+# ngtcp2
+addlicense "ngtcp2" "deps/ngtcp2" "$(cat ${rootdir}/deps/ngtcp2/COPYING)"
+
+# nghttp3
+addlicense "nghttp3" "deps/nghttp3" "$(cat ${rootdir}/deps/nghttp3/COPYING)"
+
 # node-inspect
 addlicense "node-inspect" "deps/node-inspect" "$(cat ${rootdir}/deps/node-inspect/LICENSE)"
 
@@ -101,6 +107,9 @@ addlicense "caja" "lib/internal/freeze_intrinsics.js" "$(sed -e '/SPDX-License-I
 addlicense "brotli" "deps/brotli" "$(cat ${rootdir}/deps/brotli/LICENSE)"
 
 addlicense "HdrHistogram" "deps/histogram" "$(cat ${rootdir}/deps/histogram/LICENSE.txt)"
+
+addlicense "highlight.js" "doc/api_assets/highlight.pack.js" \
+           "$(curl -sL https://raw.githubusercontent.com/highlightjs/highlight.js/63f367c46f2eeb6f9b7a3545e325eeeb917f9942/LICENSE)"
 
 addlicense "node-heapdump" "src/heap_utils.cc" \
            "$(curl -sL https://raw.githubusercontent.com/bnoordhuis/node-heapdump/0ca52441e46241ffbea56a389e2856ec01c48c97/LICENSE)"

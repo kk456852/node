@@ -19,17 +19,13 @@ namespace v8 {
 namespace internal {
 
 TQ_OBJECT_CONSTRUCTORS_IMPL(JSRegExp)
-OBJECT_CONSTRUCTORS_IMPL(JSRegExpResult, JSArray)
-OBJECT_CONSTRUCTORS_IMPL(JSRegExpResultIndices, JSArray)
+OBJECT_CONSTRUCTORS_IMPL_CHECK_SUPER(JSRegExpResult, JSArray)
+OBJECT_CONSTRUCTORS_IMPL_CHECK_SUPER(JSRegExpResultIndices, JSArray)
 
 CAST_ACCESSOR(JSRegExpResult)
 CAST_ACCESSOR(JSRegExpResultIndices)
 
 ACCESSORS(JSRegExp, last_index, Object, kLastIndexOffset)
-
-ACCESSORS(JSRegExpResult, cached_indices_or_match_info, Object,
-          kCachedIndicesOrMatchInfoOffset)
-ACCESSORS(JSRegExpResult, names, Object, kNamesOffset)
 
 JSRegExp::Type JSRegExp::TypeTag() const {
   Object data = this->data();
@@ -38,7 +34,7 @@ JSRegExp::Type JSRegExp::TypeTag() const {
   return static_cast<JSRegExp::Type>(smi.value());
 }
 
-int JSRegExp::CaptureCount() {
+int JSRegExp::CaptureCount() const {
   switch (TypeTag()) {
     case ATOM:
       return 0;
@@ -47,6 +43,11 @@ int JSRegExp::CaptureCount() {
     default:
       UNREACHABLE();
   }
+}
+
+int JSRegExp::MaxRegisterCount() const {
+  CHECK_EQ(TypeTag(), IRREGEXP);
+  return Smi::ToInt(DataAt(kIrregexpMaxRegisterCountIndex));
 }
 
 JSRegExp::Flags JSRegExp::GetFlags() {

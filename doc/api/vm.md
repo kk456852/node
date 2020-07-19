@@ -1,10 +1,12 @@
-# VM (Executing JavaScript)
+# VM (executing JavaScript)
 
 <!--introduced_in=v0.10.0-->
 
 > Stability: 2 - Stable
 
 <!--name=vm-->
+
+<!-- source_link=lib/vm.js -->
 
 The `vm` module enables compiling and running code within V8 Virtual
 Machine contexts. **The `vm` module is not a security mechanism. Do
@@ -48,7 +50,7 @@ added: v0.3.1
 Instances of the `vm.Script` class contain precompiled scripts that can be
 executed in specific contexts.
 
-### Constructor: `new vm.Script(code[, options])`
+### `new vm.Script(code[, options])`
 <!-- YAML
 added: v0.3.1
 changes:
@@ -160,7 +162,6 @@ the value of another global variable, then execute the code multiple times.
 The globals are contained in the `context` object.
 
 ```js
-const util = require('util');
 const vm = require('vm');
 
 const context = {
@@ -187,6 +188,9 @@ overhead.
 <!-- YAML
 added: v0.3.1
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/34023
+    description: The `microtaskMode` option is supported now.
   - version: v10.0.0
     pr-url: https://github.com/nodejs/node/pull/19016
     description: The `contextCodeGeneration` option is supported now.
@@ -224,6 +228,10 @@ changes:
       `EvalError`. **Default:** `true`.
     * `wasm` {boolean} If set to false any attempt to compile a WebAssembly
       module will throw a `WebAssembly.CompileError`. **Default:** `true`.
+  * `microtaskMode` {string} If set to `afterEvaluate`, microtasks (tasks
+    scheduled through `Promise`s any `async function`s) will be run immediately
+    after the script has run. They are included in the `timeout` and
+    `breakOnSigint` scopes in that case.
 * Returns: {any} the result of the very last statement executed in the script.
 
 First contextifies the given `contextObject`, runs the compiled code contained
@@ -235,7 +243,6 @@ the code multiple times in different contexts. The globals are set on and
 contained within each individual `context`.
 
 ```js
-const util = require('util');
 const vm = require('vm');
 
 const script = new vm.Script('globalVar = "set"');
@@ -295,9 +302,87 @@ console.log(globalVar);
 // 1000
 ```
 
+## `vm.measureMemory([options])`
+
+<!-- YAML
+added: v13.10.0
+-->
+
+> Stability: 1 - Experimental
+
+Measure the memory known to V8 and used by all contexts known to the
+current V8 isolate, or the main context.
+
+* `options` {Object} Optional.
+  * `mode` {string} Either `'summary'` or `'detailed'`. In summary mode,
+    only the memory measured for the main context will be returned. In
+    detailed mode, the measure measured for all contexts known to the
+    current V8 isolate will be returned.
+    **Default:** `'summary'`
+  * `execution` {string} Either `'default'` or `'eager'`. With default
+    execution, the promise will not resolve until after the next scheduled
+    garbage collection starts, which may take a while (or never if the program
+    exits before the next GC). With eager execution, the GC will be started
+    right away to measure the memory.
+    **Default:** `'default'`
+* Returns: {Promise} If the memory is successfully measured the promise will
+  resolve with an object containing information about the memory usage.
+
+The format of the object that the returned Promise may resolve with is
+specific to the V8 engine and may change from one version of V8 to the next.
+
+The returned result is different from the statistics returned by
+`v8.getHeapSpaceStatistics()` in that `vm.measureMemory()` measure the
+memory reachable by each V8 specific contexts in the current instance of
+the V8 engine, while the result of `v8.getHeapSpaceStatistics()` measure
+the memory occupied by each heap space in the current V8 instance.
+
+```js
+const vm = require('vm');
+// Measure the memory used by the main context.
+vm.measureMemory({ mode: 'summary' })
+  // This is the same as vm.measureMemory()
+  .then((result) => {
+    // The current format is:
+    // {
+    //   total: {
+    //      jsMemoryEstimate: 2418479, jsMemoryRange: [ 2418479, 2745799 ]
+    //    }
+    // }
+    console.log(result);
+  });
+
+const context = vm.createContext({ a: 1 });
+vm.measureMemory({ mode: 'detailed', execution: 'eager' })
+  .then((result) => {
+    // Reference the context here so that it won't be GC'ed
+    // until the measurement is complete.
+    console.log(context.a);
+    // {
+    //   total: {
+    //     jsMemoryEstimate: 2574732,
+    //     jsMemoryRange: [ 2574732, 2904372 ]
+    //   },
+    //   current: {
+    //     jsMemoryEstimate: 2438996,
+    //     jsMemoryRange: [ 2438996, 2768636 ]
+    //   },
+    //   other: [
+    //     {
+    //       jsMemoryEstimate: 135736,
+    //       jsMemoryRange: [ 135736, 465376 ]
+    //     }
+    //   ]
+    // }
+    console.log(result);
+  });
+```
+
 ## Class: `vm.Module`
 <!-- YAML
-added: v13.0.0
+added:
+ - v13.0.0
+ - v12.16.0
 -->
 
 > Stability: 1 - Experimental
@@ -312,22 +397,24 @@ specification.
 
 Unlike `vm.Script` however, every `vm.Module` object is bound to a context from
 its creation. Operations on `vm.Module` objects are intrinsically asynchronous,
-in contrast with the synchronous nature of `vm.Script` objects. With the help
-of async functions, however, manipulating `vm.Module` objects is fairly
-straightforward.
+in contrast with the synchronous nature of `vm.Script` objects. The use of
+'async' functions can help with manipulating `vm.Module` objects.
 
 Using a `vm.Module` object requires three distinct steps: creation/parsing,
 linking, and evaluation. These three steps are illustrated in the following
 example.
 
 This implementation lies at a lower level than the [ECMAScript Module
-loader][]. There is also currently no way to interact with the Loader, though
+loader][]. There is also no way to interact with the Loader yet, though
 support is planned.
 
 ```js
 const vm = require('vm');
 
-const contextifiedObject = vm.createContext({ secret: 42 });
+const contextifiedObject = vm.createContext({
+  secret: 42,
+  print: console.log,
+});
 
 (async () => {
   // Step 1
@@ -343,6 +430,7 @@ const contextifiedObject = vm.createContext({ secret: 42 });
   const bar = new vm.SourceTextModule(`
     import s from 'foo';
     s;
+    print(s);
   `, { context: contextifiedObject });
 
   // Step 2
@@ -385,16 +473,11 @@ const contextifiedObject = vm.createContext({ secret: 42 });
 
   // Step 3
   //
-  // Evaluate the Module. The evaluate() method returns a Promise with a single
-  // property "result" that contains the result of the very last statement
-  // executed in the Module. In the case of `bar`, it is `s;`, which refers to
-  // the default export of the `foo` module, the `secret` we set in the
-  // beginning to 42.
+  // Evaluate the Module. The evaluate() method returns a promise which will
+  // resolve after the module has finished evaluating.
 
-  const { result } = await bar.evaluate();
-
-  console.log(result);
   // Prints 42.
+  await bar.evaluate();
 })();
 ```
 
@@ -437,17 +520,14 @@ in the ECMAScript specification.
 
 Evaluate the module.
 
-This must be called after the module has been linked; otherwise it will
-throw an error. It could be called also when the module has already been
-evaluated, in which case it will do one of the following two things:
-
-* return `undefined` if the initial evaluation ended in success (`module.status`
-  is `'evaluated'`)
-* rethrow the same exception the initial evaluation threw if the initial
-  evaluation ended in an error (`module.status` is `'errored'`)
+This must be called after the module has been linked; otherwise it will reject.
+It could be called also when the module has already been evaluated, in which
+case it will either do nothing if the initial evaluation ended in success
+(`module.status` is `'evaluated'`) or it will re-throw the exception that the
+initial evaluation resulted in (`module.status` is `'errored'`).
 
 This method cannot be called while the module is being evaluated
-(`module.status` is `'evaluating'`) to prevent infinite recursion.
+(`module.status` is `'evaluating'`).
 
 Corresponds to the [Evaluate() concrete method][] field of [Cyclic Module
 Record][]s in the ECMAScript specification.
@@ -557,7 +637,7 @@ flag enabled.*
 The `vm.SourceTextModule` class provides the [Source Text Module Record][] as
 defined in the ECMAScript specification.
 
-### Constructor: `new vm.SourceTextModule(code[, options])`
+### `new vm.SourceTextModule(code[, options])`
 
 * `code` {string} JavaScript Module code to parse
 * `options`
@@ -625,7 +705,9 @@ const contextifiedObject = vm.createContext({ secret: 42 });
 
 ### `sourceTextModule.createCachedData()`
 <!-- YAML
-added: v13.7.0
+added:
+ - v13.7.0
+ - v12.17.0
 -->
 
 * Returns: {Buffer}
@@ -647,7 +729,9 @@ const module2 = new vm.SourceTextModule('const a = 1;', { cachedData });
 
 ## Class: `vm.SyntheticModule`
 <!-- YAML
-added: v13.0.0
+added:
+ - v13.0.0
+ - v12.16.0
 -->
 
 > Stability: 1 - Experimental
@@ -674,9 +758,11 @@ const module = new vm.SyntheticModule(['default'], function() {
 // Use `module` in linking...
 ```
 
-### Constructor: `new vm.SyntheticModule(exportNames, evaluateCallback[, options])`
+### `new vm.SyntheticModule(exportNames, evaluateCallback[, options])`
 <!-- YAML
-added: v13.0.0
+added:
+ - v13.0.0
+ - v12.16.0
 -->
 
 * `exportNames` {string[]} Array of names that will be exported from the module.
@@ -696,7 +782,9 @@ the module to access information outside the specified `context`. Use
 
 ### `syntheticModule.setExport(name, value)`
 <!-- YAML
-added: v13.0.0
+added:
+ - v13.0.0
+ - v12.16.0
 -->
 
 * `name` {string} Name of the export to set.
@@ -724,6 +812,15 @@ const vm = require('vm');
 ## `vm.compileFunction(code[, params[, options]])`
 <!-- YAML
 added: v10.10.0
+changes:
+  - version:
+    - v14.1.0
+    - v13.14.0
+    pr-url: https://github.com/nodejs/node/pull/32985
+    description: The `importModuleDynamically` option is now supported.
+  - version: v14.3.0
+    pr-url: https://github.com/nodejs/node/pull/33364
+    description: Removal of `importModuleDynamically` due to compatibility issues
 -->
 
 * `code` {string} The body of the function to compile.
@@ -756,6 +853,9 @@ function with the given `params`.
 <!-- YAML
 added: v0.3.1
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/34023
+    description: The `microtaskMode` option is supported now.
   - version: v10.0.0
     pr-url: https://github.com/nodejs/node/pull/19398
     description: The first argument can no longer be a function.
@@ -781,6 +881,10 @@ changes:
       `EvalError`. **Default:** `true`.
     * `wasm` {boolean} If set to false any attempt to compile a WebAssembly
       module will throw a `WebAssembly.CompileError`. **Default:** `true`.
+  * `microtaskMode` {string} If set to `afterEvaluate`, microtasks (tasks
+    scheduled through `Promise`s any `async function`s) will be run immediately
+    after a script has run through [`script.runInContext()`][].
+    They are included in the `timeout` and `breakOnSigint` scopes in that case.
 * Returns: {Object} contextified object.
 
 If given a `contextObject`, the `vm.createContext()` method will [prepare
@@ -792,7 +896,6 @@ properties but also having the built-in objects and functions any standard
 will remain unchanged.
 
 ```js
-const util = require('util');
 const vm = require('vm');
 
 global.globalVar = 3;
@@ -897,7 +1000,6 @@ The following example compiles and executes different scripts using a single
 [contextified][] object:
 
 ```js
-const util = require('util');
 const vm = require('vm');
 
 const contextObject = { globalVar: 1 };
@@ -914,6 +1016,9 @@ console.log(contextObject);
 <!-- YAML
 added: v0.3.1
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/34023
+    description: The `microtaskMode` option is supported now.
   - version: v10.0.0
     pr-url: https://github.com/nodejs/node/pull/19016
     description: The `contextCodeGeneration` option is supported now.
@@ -980,6 +1085,10 @@ changes:
     * Returns: {Module Namespace Object|vm.Module} Returning a `vm.Module` is
       recommended in order to take advantage of error tracking, and to avoid
       issues with namespaces that contain `then` function exports.
+  * `microtaskMode` {string} If set to `afterEvaluate`, microtasks (tasks
+    scheduled through `Promise`s any `async function`s) will be run immediately
+    after the script has run. They are included in the `timeout` and
+    `breakOnSigint` scopes in that case.
 * Returns: {any} the result of the very last statement executed in the script.
 
 The `vm.runInNewContext()` first contextifies the given `contextObject` (or
@@ -993,7 +1102,6 @@ The following example compiles and executes code that increments a global
 variable and sets a new one. These globals are contained in the `contextObject`.
 
 ```js
-const util = require('util');
 const vm = require('vm');
 
 const contextObject = {
@@ -1087,7 +1195,7 @@ local scope, so the value `localVar` is changed. In this way
 `vm.runInThisContext()` is much like an [indirect `eval()` call][], e.g.
 `(0,eval)('code')`.
 
-## Example: Running an HTTP Server within a VM
+## Example: Running an HTTP server within a VM
 
 When using either [`script.runInThisContext()`][] or
 [`vm.runInThisContext()`][], the code is executed within the current V8 global
@@ -1137,13 +1245,13 @@ within which it can operate. The process of creating the V8 Context and
 associating it with the `contextObject` is what this document refers to as
 "contextifying" the object.
 
-## Timeout limitations when using `process.nextTick()`, Promises, and `queueMicrotask()`
+## Timeout interactions with asynchronous tasks and Promises
 
-Because of the internal mechanics of how the `process.nextTick()` queue and
-the microtask queue that underlies Promises are implemented within V8 and
-Node.js, it is possible for code running within a context to "escape" the
-`timeout` set using `vm.runInContext()`, `vm.runInNewContext()`, and
-`vm.runInThisContext()`.
+`Promise`s and `async function`s can schedule tasks run by the JavaScript
+engine asynchronously. By default, these tasks are run after all JavaScript
+functions on the current stack are done executing.
+This allows escaping the functionality of the `timeout` and
+`breakOnSigint` options.
 
 For example, the following code executed by `vm.runInNewContext()` with a
 timeout of 5 milliseconds schedules an infinite loop to run after a promise
@@ -1153,21 +1261,52 @@ resolves. The scheduled loop is never interrupted by the timeout:
 const vm = require('vm');
 
 function loop() {
+  console.log('entering loop');
   while (1) console.log(Date.now());
 }
 
 vm.runInNewContext(
-  'Promise.resolve().then(loop);',
+  'Promise.resolve().then(() => loop());',
   { loop, console },
   { timeout: 5 }
 );
+// This prints *before* 'entering loop' (!)
+console.log('done executing');
 ```
 
-This issue also occurs when the `loop()` call is scheduled using
-the `process.nextTick()` and `queueMicrotask()` functions.
+This can be addressed by passing `microtaskMode: 'afterEvaluate'` to the code
+that creates the `Context`:
 
-This issue occurs because all contexts share the same microtask and nextTick
-queues.
+```js
+const vm = require('vm');
+
+function loop() {
+  while (1) console.log(Date.now());
+}
+
+vm.runInNewContext(
+  'Promise.resolve().then(() => loop());',
+  { loop, console },
+  { timeout: 5, microtaskMode: 'afterEvaluate' }
+);
+```
+
+In this case, the microtask scheduled through `promise.then()` will be run
+before returning from `vm.runInNewContext()`, and will be interrupted
+by the `timeout` functionality. This applies only to code running in a
+`vm.Context`, so e.g. [`vm.runInThisContext()`][] does not take this option.
+
+Promise callbacks are entered into the microtask queue of the context in which
+they were created. For example, if `() => loop()` is replaced with just `loop`
+in the above example, then `loop` will be pushed into the global microtask
+queue, because it is a function from the outer (main) context, and thus will
+also be able to escape the timeout.
+
+If asynchronous scheduling functions such as `process.nextTick()`,
+`queueMicrotask()`, `setTimeout()`, `setImmediate()`, etc. are made available
+inside a `vm.Context`, functions passed to them will be added to global queues,
+which are shared by all contexts. Therefore, callbacks passed to those functions
+are not controllable through the timeout either.
 
 [`ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`]: errors.html#ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING
 [`ERR_VM_MODULE_STATUS`]: errors.html#ERR_VM_MODULE_STATUS

@@ -48,15 +48,14 @@ expectNoWorker('--trace-event-file-pattern {pid}-${rotation}.trace_events ' +
        '--trace-event-categories node.async_hooks', 'B\n');
 expect('--unhandled-rejections=none', 'B\n');
 
-if (!common.isWindows) {
+if (common.isLinux) {
   expect('--perf-basic-prof', 'B\n');
   expect('--perf-basic-prof-only-functions', 'B\n');
-}
 
-if (common.isLinux && ['arm', 'x64'].includes(process.arch)) {
-  // PerfJitLogger is only implemented in Linux.
-  expect('--perf-prof', 'B\n');
-  expect('--perf-prof-unwinding-info', 'B\n');
+  if (['arm', 'x64'].includes(process.arch)) {
+    expect('--perf-prof', 'B\n');
+    expect('--perf-prof-unwinding-info', 'B\n');
+  }
 }
 
 if (common.hasCrypto) {
@@ -68,6 +67,8 @@ if (common.hasCrypto) {
 // V8 options
 expect('--abort_on-uncaught_exception', 'B\n');
 expect('--disallow-code-generation-from-strings', 'B\n');
+expect('--huge-max-old-generation-size', 'B\n');
+expect('--jitless', 'B\n');
 expect('--max-old-space-size=0', 'B\n');
 expect('--stack-trace-limit=100',
        /(\s*at f \(\[(eval|worker eval)\]:1:\d*\)\r?\n)/,
@@ -76,6 +77,10 @@ expect('--stack-trace-limit=100',
 // Unsupported on arm. See https://crbug.com/v8/8713.
 if (!['arm', 'arm64'].includes(process.arch))
   expect('--interpreted-frames-native-stack', 'B\n');
+
+// Workers can't eval as ES Modules. https://github.com/nodejs/node/issues/30682
+expectNoWorker('--experimental-top-level-await --input-type=module',
+               'B\n', 'console.log(await "B")');
 
 function expectNoWorker(opt, want, command, wantsError) {
   expect(opt, want, command, wantsError, false);

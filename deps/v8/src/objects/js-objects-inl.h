@@ -7,6 +7,7 @@
 
 #include "src/objects/js-objects.h"
 
+#include "src/diagnostics/code-tracer.h"
 #include "src/heap/heap-write-barrier.h"
 #include "src/objects/elements.h"
 #include "src/objects/embedder-data-slot-inl.h"
@@ -71,7 +72,7 @@ MaybeHandle<Object> JSReceiver::GetElement(Isolate* isolate,
 
 Handle<Object> JSReceiver::GetDataProperty(Handle<JSReceiver> object,
                                            Handle<Name> name) {
-  LookupIterator it(object, name, object,
+  LookupIterator it(object->GetIsolate(), object, name, object,
                     LookupIterator::PROTOTYPE_CHAIN_SKIP_INTERCEPTOR);
   if (!it.IsFound()) return it.factory()->undefined_value();
   return GetDataProperty(&it);
@@ -302,11 +303,12 @@ void JSObject::SetEmbedderField(int index, Smi value) {
 }
 
 bool JSObject::IsUnboxedDoubleField(FieldIndex index) const {
-  Isolate* isolate = GetIsolateForPtrCompr(*this);
+  const Isolate* isolate = GetIsolateForPtrCompr(*this);
   return IsUnboxedDoubleField(isolate, index);
 }
 
-bool JSObject::IsUnboxedDoubleField(Isolate* isolate, FieldIndex index) const {
+bool JSObject::IsUnboxedDoubleField(const Isolate* isolate,
+                                    FieldIndex index) const {
   if (!FLAG_unbox_double_fields) return false;
   return map(isolate).IsUnboxedDoubleField(isolate, index);
 }
@@ -315,11 +317,12 @@ bool JSObject::IsUnboxedDoubleField(Isolate* isolate, FieldIndex index) const {
 // is needed to correctly distinguish between properties stored in-object and
 // properties stored in the properties array.
 Object JSObject::RawFastPropertyAt(FieldIndex index) const {
-  Isolate* isolate = GetIsolateForPtrCompr(*this);
+  const Isolate* isolate = GetIsolateForPtrCompr(*this);
   return RawFastPropertyAt(isolate, index);
 }
 
-Object JSObject::RawFastPropertyAt(Isolate* isolate, FieldIndex index) const {
+Object JSObject::RawFastPropertyAt(const Isolate* isolate,
+                                   FieldIndex index) const {
   DCHECK(!IsUnboxedDoubleField(isolate, index));
   if (index.is_inobject()) {
     return TaggedField<Object>::load(isolate, *this, index.offset());
@@ -454,6 +457,10 @@ ACCESSORS(JSFunction, raw_feedback_cell, FeedbackCell, kFeedbackCellOffset)
 ACCESSORS(JSGlobalObject, native_context, NativeContext, kNativeContextOffset)
 ACCESSORS(JSGlobalObject, global_proxy, JSGlobalProxy, kGlobalProxyOffset)
 
+DEF_GETTER(JSGlobalObject, native_context_unchecked, Object) {
+  return TaggedField<Object, kNativeContextOffset>::load(isolate, *this);
+}
+
 FeedbackVector JSFunction::feedback_vector() const {
   DCHECK(has_feedback_vector());
   return FeedbackVector::cast(raw_feedback_cell().value());
@@ -567,10 +574,12 @@ void JSFunction::set_shared(SharedFunctionInfo value, WriteBarrierMode mode) {
 void JSFunction::ClearOptimizedCodeSlot(const char* reason) {
   if (has_feedback_vector() && feedback_vector().has_optimized_code()) {
     if (FLAG_trace_opt) {
-      PrintF("[evicting entry from optimizing code feedback slot (%s) for ",
+      CodeTracer::Scope scope(GetIsolate()->GetCodeTracer());
+      PrintF(scope.file(),
+             "[evicting entry from optimizing code feedback slot (%s) for ",
              reason);
-      ShortPrint();
-      PrintF("]\n");
+      ShortPrint(scope.file());
+      PrintF(scope.file(), "]\n");
     }
     feedback_vector().ClearOptimizedCode();
   }
@@ -699,12 +708,15 @@ bool JSFunction::NeedsResetDueToFlushedBytecode() {
          code.builtin_index() != Builtins::kCompileLazy;
 }
 
-void JSFunction::ResetIfBytecodeFlushed() {
+void JSFunction::ResetIfBytecodeFlushed(
+    base::Optional<std::function<void(HeapObject object, ObjectSlot slot,
+                                      HeapObject target)>>
+        gc_notify_updated_slot) {
   if (FLAG_flush_bytecode && NeedsResetDueToFlushedBytecode()) {
     // Bytecode was flushed and function is now uncompiled, reset JSFunction
     // by setting code to CompileLazy and clearing the feedback vector.
     set_code(GetIsolate()->builtins()->builtin(i::Builtins::kCompileLazy));
-    raw_feedback_cell().reset();
+    raw_feedback_cell().reset_feedback_vector(gc_notify_updated_slot);
   }
 }
 
@@ -804,7 +816,7 @@ DEF_GETTER(JSObject, HasFastPackedElements, bool) {
 }
 
 DEF_GETTER(JSObject, HasDictionaryElements, bool) {
-  return GetElementsKind(isolate) == DICTIONARY_ELEMENTS;
+  return IsDictionaryElementsKind(GetElementsKind(isolate));
 }
 
 DEF_GETTER(JSObject, HasPackedElements, bool) {
@@ -824,11 +836,11 @@ DEF_GETTER(JSObject, HasNonextensibleElements, bool) {
 }
 
 DEF_GETTER(JSObject, HasFastArgumentsElements, bool) {
-  return GetElementsKind(isolate) == FAST_SLOPPY_ARGUMENTS_ELEMENTS;
+  return IsFastArgumentsElementsKind(GetElementsKind(isolate));
 }
 
 DEF_GETTER(JSObject, HasSlowArgumentsElements, bool) {
-  return GetElementsKind(isolate) == SLOW_SLOPPY_ARGUMENTS_ELEMENTS;
+  return IsSlowArgumentsElementsKind(GetElementsKind(isolate));
 }
 
 DEF_GETTER(JSObject, HasSloppyArgumentsElements, bool) {
@@ -933,8 +945,9 @@ DEF_GETTER(JSReceiver, property_array, PropertyArray) {
 
 Maybe<bool> JSReceiver::HasProperty(Handle<JSReceiver> object,
                                     Handle<Name> name) {
-  LookupIterator it = LookupIterator::PropertyOrElement(object->GetIsolate(),
-                                                        object, name, object);
+  Isolate* isolate = object->GetIsolate();
+  LookupIterator::Key key(isolate, name);
+  LookupIterator it(isolate, object, key, object);
   return HasProperty(&it);
 }
 
@@ -956,15 +969,17 @@ Maybe<bool> JSReceiver::HasOwnProperty(Handle<JSReceiver> object,
 
 Maybe<PropertyAttributes> JSReceiver::GetPropertyAttributes(
     Handle<JSReceiver> object, Handle<Name> name) {
-  LookupIterator it = LookupIterator::PropertyOrElement(object->GetIsolate(),
-                                                        object, name, object);
+  Isolate* isolate = object->GetIsolate();
+  LookupIterator::Key key(isolate, name);
+  LookupIterator it(isolate, object, key, object);
   return GetPropertyAttributes(&it);
 }
 
 Maybe<PropertyAttributes> JSReceiver::GetOwnPropertyAttributes(
     Handle<JSReceiver> object, Handle<Name> name) {
-  LookupIterator it = LookupIterator::PropertyOrElement(
-      object->GetIsolate(), object, name, object, LookupIterator::OWN);
+  Isolate* isolate = object->GetIsolate();
+  LookupIterator::Key key(isolate, name);
+  LookupIterator it(isolate, object, key, object, LookupIterator::OWN);
   return GetPropertyAttributes(&it);
 }
 
@@ -1005,13 +1020,11 @@ bool JSGlobalProxy::IsDetachedFrom(JSGlobalObject global) const {
 
 inline int JSGlobalProxy::SizeWithEmbedderFields(int embedder_field_count) {
   DCHECK_GE(embedder_field_count, 0);
-  return kSize + embedder_field_count * kEmbedderDataSlotSize;
+  return kHeaderSize + embedder_field_count * kEmbedderDataSlotSize;
 }
 
 ACCESSORS(JSIteratorResult, value, Object, kValueOffset)
 ACCESSORS(JSIteratorResult, done, Object, kDoneOffset)
-
-TQ_SMI_ACCESSORS(JSStringIterator, index)
 
 // If the fast-case backing storage takes up much more memory than a dictionary
 // backing storage would, the object should have slow elements.

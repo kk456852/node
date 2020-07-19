@@ -140,9 +140,9 @@ class MemoryTracker {
                                        const char* node_name = nullptr);
 
   // Shortcut to extract the underlying object out of the smart pointer
-  template <typename T>
+  template <typename T, typename D>
   inline void TrackField(const char* edge_name,
-                         const std::unique_ptr<T>& value,
+                         const std::unique_ptr<T, D>& value,
                          const char* node_name = nullptr);
 
   template <typename T>
@@ -216,13 +216,6 @@ class MemoryTracker {
   inline void TrackField(const char* edge_name,
                          const v8::BackingStore* value,
                          const char* node_name = nullptr);
-  // We do not implement CleanupHookCallback as MemoryRetainer
-  // but instead specialize the method here to avoid the cost of
-  // virtual pointers.
-  // TODO(joyeecheung): do this for BaseObject and remove WrappedObject()
-  void TrackField(const char* edge_name,
-                  const CleanupHookCallback& value,
-                  const char* node_name = nullptr);
   inline void TrackField(const char* edge_name,
                          const uv_buf_t& value,
                          const char* node_name = nullptr);

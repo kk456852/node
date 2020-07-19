@@ -97,17 +97,17 @@ void FSEventWrap::Initialize(Local<Object> target,
 
   auto fsevent_string = FIXED_ONE_BYTE_STRING(env->isolate(), "FSEvent");
   Local<FunctionTemplate> t = env->NewFunctionTemplate(New);
-  t->InstanceTemplate()->SetInternalFieldCount(1);
+  t->InstanceTemplate()->SetInternalFieldCount(
+      FSEventWrap::kInternalFieldCount);
   t->SetClassName(fsevent_string);
 
-  t->Inherit(AsyncWrap::GetConstructorTemplate(env));
+  t->Inherit(HandleWrap::GetConstructorTemplate(env));
   env->SetProtoMethod(t, "start", Start);
-  env->SetProtoMethod(t, "close", Close);
 
   Local<FunctionTemplate> get_initialized_templ =
       FunctionTemplate::New(env->isolate(),
                             GetInitialized,
-                            env->as_callback_data(),
+                            Local<Value>(),
                             Signature::New(env->isolate(), t));
 
   t->PrototypeTemplate()->SetAccessorProperty(

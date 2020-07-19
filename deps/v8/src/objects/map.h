@@ -5,11 +5,13 @@
 #ifndef V8_OBJECTS_MAP_H_
 #define V8_OBJECTS_MAP_H_
 
+#include "src/base/bit-field.h"
 #include "src/common/globals.h"
 #include "src/objects/code.h"
 #include "src/objects/heap-object.h"
 #include "src/objects/internal-index.h"
 #include "src/objects/objects.h"
+#include "torque-generated/bit-fields-tq.h"
 #include "torque-generated/field-offsets-tq.h"
 
 // Has to be the last include (doesn't have include guards):
@@ -23,10 +25,10 @@ enum InstanceType : uint16_t;
 #define DATA_ONLY_VISITOR_ID_LIST(V) \
   V(BigInt)                          \
   V(ByteArray)                       \
+  V(CoverageInfo)                    \
   V(DataObject)                      \
-  V(FixedDoubleArray)                \
-  V(SeqOneByteString)                \
-  V(SeqTwoByteString)
+  V(FeedbackMetadata)                \
+  V(FixedDoubleArray)
 
 #define POINTER_VISITOR_ID_LIST(V)     \
   V(AllocationSite)                    \
@@ -34,7 +36,6 @@ enum InstanceType : uint16_t;
   V(Cell)                              \
   V(Code)                              \
   V(CodeDataContainer)                 \
-  V(ConsString)                        \
   V(Context)                           \
   V(DataHandler)                       \
   V(DescriptorArray)                   \
@@ -42,7 +43,6 @@ enum InstanceType : uint16_t;
   V(EphemeronHashTable)                \
   V(FeedbackCell)                      \
   V(FeedbackVector)                    \
-  V(FixedArray)                        \
   V(FreeSpace)                         \
   V(JSApiObject)                       \
   V(JSArrayBuffer)                     \
@@ -62,7 +62,6 @@ enum InstanceType : uint16_t;
   V(PrototypeInfo)                     \
   V(SharedFunctionInfo)                \
   V(ShortcutCandidate)                 \
-  V(SlicedString)                      \
   V(SmallOrderedHashMap)               \
   V(SmallOrderedHashSet)               \
   V(SmallOrderedNameDictionary)        \
@@ -70,15 +69,19 @@ enum InstanceType : uint16_t;
   V(Struct)                            \
   V(Symbol)                            \
   V(SyntheticModule)                   \
-  V(ThinString)                        \
   V(TransitionArray)                   \
   V(UncompiledDataWithoutPreparseData) \
   V(UncompiledDataWithPreparseData)    \
   V(WasmCapiFunctionData)              \
   V(WasmIndirectFunctionTable)         \
   V(WasmInstanceObject)                \
-  V(WeakArray)                         \
+  V(WasmArray)                         \
+  V(WasmStruct)                        \
   V(WeakCell)
+
+#define TORQUE_VISITOR_ID_LIST(V)     \
+  TORQUE_DATA_ONLY_VISITOR_ID_LIST(V) \
+  TORQUE_POINTER_VISITOR_ID_LIST(V)
 
 // Objects with the same visitor id are processed in the same way by
 // the heap visitors. The visitor ids for data only objects must precede
@@ -86,10 +89,13 @@ enum InstanceType : uint16_t;
 // of whether an object contains only data or may contain pointers.
 enum VisitorId {
 #define VISITOR_ID_ENUM_DECL(id) kVisit##id,
-  DATA_ONLY_VISITOR_ID_LIST(VISITOR_ID_ENUM_DECL) kDataOnlyVisitorIdCount,
+  DATA_ONLY_VISITOR_ID_LIST(VISITOR_ID_ENUM_DECL)
+      TORQUE_DATA_ONLY_VISITOR_ID_LIST(VISITOR_ID_ENUM_DECL)
+          kDataOnlyVisitorIdCount,
   POINTER_VISITOR_ID_LIST(VISITOR_ID_ENUM_DECL)
+      TORQUE_POINTER_VISITOR_ID_LIST(VISITOR_ID_ENUM_DECL)
 #undef VISITOR_ID_ENUM_DECL
-      kVisitorIdCount
+          kVisitorIdCount
 };
 
 enum class ObjectFields {
@@ -105,86 +111,86 @@ using MapHandles = std::vector<Handle<Map>>;
 //  - How to iterate over an object (for garbage collection)
 //
 // Map layout:
-// +---------------+---------------------------------------------+
-// |   _ Type _    | _ Description _                             |
-// +---------------+---------------------------------------------+
-// | TaggedPointer | map - Always a pointer to the MetaMap root  |
-// +---------------+---------------------------------------------+
-// | Int           | The first int field                         |
-//  `---+----------+---------------------------------------------+
-//      | Byte     | [instance_size]                             |
-//      +----------+---------------------------------------------+
-//      | Byte     | If Map for a primitive type:                |
-//      |          |   native context index for constructor fn   |
-//      |          | If Map for an Object type:                  |
-//      |          |   inobject properties start offset in words |
-//      +----------+---------------------------------------------+
-//      | Byte     | [used_or_unused_instance_size_in_words]     |
-//      |          | For JSObject in fast mode this byte encodes |
-//      |          | the size of the object that includes only   |
-//      |          | the used property fields or the slack size  |
-//      |          | in properties backing store.                |
-//      +----------+---------------------------------------------+
-//      | Byte     | [visitor_id]                                |
-// +----+----------+---------------------------------------------+
-// | Int           | The second int field                        |
-//  `---+----------+---------------------------------------------+
-//      | Short    | [instance_type]                             |
-//      +----------+---------------------------------------------+
-//      | Byte     | [bit_field]                                 |
-//      |          |   - has_non_instance_prototype (bit 0)      |
-//      |          |   - is_callable (bit 1)                     |
-//      |          |   - has_named_interceptor (bit 2)           |
-//      |          |   - has_indexed_interceptor (bit 3)         |
-//      |          |   - is_undetectable (bit 4)                 |
-//      |          |   - is_access_check_needed (bit 5)          |
-//      |          |   - is_constructor (bit 6)                  |
-//      |          |   - has_prototype_slot (bit 7)              |
-//      +----------+---------------------------------------------+
-//      | Byte     | [bit_field2]                                |
-//      |          |   - new_target_is_base (bit 0)              |
-//      |          |   - is_immutable_proto (bit 1)              |
-//      |          |   - unused bit (bit 2)                      |
-//      |          |   - elements_kind (bits 3..7)               |
-// +----+----------+---------------------------------------------+
-// | Int           | [bit_field3]                                |
-// |               |   - enum_length (bit 0..9)                  |
-// |               |   - number_of_own_descriptors (bit 10..19)  |
-// |               |   - is_prototype_map (bit 20)               |
-// |               |   - is_dictionary_map (bit 21)              |
-// |               |   - owns_descriptors (bit 22)               |
-// |               |   - is_in_retained_map_list (bit 23)        |
-// |               |   - is_deprecated (bit 24)                  |
-// |               |   - is_unstable (bit 25)                    |
-// |               |   - is_migration_target (bit 26)            |
-// |               |   - is_extensible (bit 28)                  |
-// |               |   - may_have_interesting_symbols (bit 28)   |
-// |               |   - construction_counter (bit 29..31)       |
-// |               |                                             |
-// +*************************************************************+
-// | Int           | On systems with 64bit pointer types, there  |
-// |               | is an unused 32bits after bit_field3        |
-// +*************************************************************+
-// | TaggedPointer | [prototype]                                 |
-// +---------------+---------------------------------------------+
-// | TaggedPointer | [constructor_or_backpointer]                |
-// +---------------+---------------------------------------------+
-// | TaggedPointer | [instance_descriptors]                      |
-// +*************************************************************+
-// ! TaggedPointer ! [layout_descriptors]                        !
-// !               ! Field is only present if compile-time flag  !
-// !               ! FLAG_unbox_double_fields is enabled         !
-// !               ! (basically on 64 bit architectures)         !
-// +*************************************************************+
-// | TaggedPointer | [dependent_code]                            |
-// +---------------+---------------------------------------------+
-// | TaggedPointer | [prototype_validity_cell]                   |
-// +---------------+---------------------------------------------+
-// | TaggedPointer | If Map is a prototype map:                  |
-// |               |   [prototype_info]                          |
-// |               | Else:                                       |
-// |               |   [raw_transitions]                         |
-// +---------------+---------------------------------------------+
+// +---------------+------------------------------------------------+
+// |   _ Type _    | _ Description _                                |
+// +---------------+------------------------------------------------+
+// | TaggedPointer | map - Always a pointer to the MetaMap root     |
+// +---------------+------------------------------------------------+
+// | Int           | The first int field                            |
+//  `---+----------+------------------------------------------------+
+//      | Byte     | [instance_size]                                |
+//      +----------+------------------------------------------------+
+//      | Byte     | If Map for a primitive type:                   |
+//      |          |   native context index for constructor fn      |
+//      |          | If Map for an Object type:                     |
+//      |          |   inobject properties start offset in words    |
+//      +----------+------------------------------------------------+
+//      | Byte     | [used_or_unused_instance_size_in_words]        |
+//      |          | For JSObject in fast mode this byte encodes    |
+//      |          | the size of the object that includes only      |
+//      |          | the used property fields or the slack size     |
+//      |          | in properties backing store.                   |
+//      +----------+------------------------------------------------+
+//      | Byte     | [visitor_id]                                   |
+// +----+----------+------------------------------------------------+
+// | Int           | The second int field                           |
+//  `---+----------+------------------------------------------------+
+//      | Short    | [instance_type]                                |
+//      +----------+------------------------------------------------+
+//      | Byte     | [bit_field]                                    |
+//      |          |   - has_non_instance_prototype (bit 0)         |
+//      |          |   - is_callable (bit 1)                        |
+//      |          |   - has_named_interceptor (bit 2)              |
+//      |          |   - has_indexed_interceptor (bit 3)            |
+//      |          |   - is_undetectable (bit 4)                    |
+//      |          |   - is_access_check_needed (bit 5)             |
+//      |          |   - is_constructor (bit 6)                     |
+//      |          |   - has_prototype_slot (bit 7)                 |
+//      +----------+------------------------------------------------+
+//      | Byte     | [bit_field2]                                   |
+//      |          |   - new_target_is_base (bit 0)                 |
+//      |          |   - is_immutable_proto (bit 1)                 |
+//      |          |   - unused bit (bit 2)                         |
+//      |          |   - elements_kind (bits 3..7)                  |
+// +----+----------+------------------------------------------------+
+// | Int           | [bit_field3]                                   |
+// |               |   - enum_length (bit 0..9)                     |
+// |               |   - number_of_own_descriptors (bit 10..19)     |
+// |               |   - is_prototype_map (bit 20)                  |
+// |               |   - is_dictionary_map (bit 21)                 |
+// |               |   - owns_descriptors (bit 22)                  |
+// |               |   - is_in_retained_map_list (bit 23)           |
+// |               |   - is_deprecated (bit 24)                     |
+// |               |   - is_unstable (bit 25)                       |
+// |               |   - is_migration_target (bit 26)               |
+// |               |   - is_extensible (bit 28)                     |
+// |               |   - may_have_interesting_symbols (bit 28)      |
+// |               |   - construction_counter (bit 29..31)          |
+// |               |                                                |
+// +****************************************************************+
+// | Int           | On systems with 64bit pointer types, there     |
+// |               | is an unused 32bits after bit_field3           |
+// +****************************************************************+
+// | TaggedPointer | [prototype]                                    |
+// +---------------+------------------------------------------------+
+// | TaggedPointer | [constructor_or_backpointer_or_native_context] |
+// +---------------+------------------------------------------------+
+// | TaggedPointer | [instance_descriptors]                         |
+// +****************************************************************+
+// ! TaggedPointer ! [layout_descriptors]                           !
+// !               ! Field is only present if compile-time flag     !
+// !               ! FLAG_unbox_double_fields is enabled            !
+// !               ! (basically on 64 bit architectures)            !
+// +****************************************************************+
+// | TaggedPointer | [dependent_code]                               |
+// +---------------+------------------------------------------------+
+// | TaggedPointer | [prototype_validity_cell]                      |
+// +---------------+------------------------------------------------+
+// | TaggedPointer | If Map is a prototype map:                     |
+// |               |   [prototype_info]                             |
+// |               | Else:                                          |
+// |               |   [raw_transitions]                            |
+// +---------------+------------------------------------------------+
 
 class Map : public HeapObject {
  public:
@@ -249,34 +255,20 @@ class Map : public HeapObject {
   // Atomic accessors, used for whitelisting legitimate concurrent accesses.
   DECL_PRIMITIVE_ACCESSORS(relaxed_bit_field, byte)
 
-// Bit positions for |bit_field|.
-#define MAP_BIT_FIELD_FIELDS(V, _)          \
-  V(HasNonInstancePrototypeBit, bool, 1, _) \
-  V(IsCallableBit, bool, 1, _)              \
-  V(HasNamedInterceptorBit, bool, 1, _)     \
-  V(HasIndexedInterceptorBit, bool, 1, _)   \
-  V(IsUndetectableBit, bool, 1, _)          \
-  V(IsAccessCheckNeededBit, bool, 1, _)     \
-  V(IsConstructorBit, bool, 1, _)           \
-  V(HasPrototypeSlotBit, bool, 1, _)
-
-  DEFINE_BIT_FIELDS(MAP_BIT_FIELD_FIELDS)
-#undef MAP_BIT_FIELD_FIELDS
+  // Bit positions for |bit_field|.
+  struct Bits1 {
+    DEFINE_TORQUE_GENERATED_MAP_BIT_FIELDS1()
+  };
 
   //
   // Bit field 2.
   //
   DECL_PRIMITIVE_ACCESSORS(bit_field2, byte)
 
-// Bit positions for |bit_field2|.
-#define MAP_BIT_FIELD2_FIELDS(V, _)      \
-  V(NewTargetIsBaseBit, bool, 1, _)      \
-  V(IsImmutablePrototypeBit, bool, 1, _) \
-  V(UnusedBit, bool, 1, _)               \
-  V(ElementsKindBits, ElementsKind, 5, _)
-
-  DEFINE_BIT_FIELDS(MAP_BIT_FIELD2_FIELDS)
-#undef MAP_BIT_FIELD2_FIELDS
+  // Bit positions for |bit_field2|.
+  struct Bits2 {
+    DEFINE_TORQUE_GENERATED_MAP_BIT_FIELDS2()
+  };
 
   //
   // Bit field 3.
@@ -287,30 +279,24 @@ class Map : public HeapObject {
   // is deterministic. Depending on the V8 build mode there could be no padding.
   V8_INLINE void clear_padding();
 
-// Bit positions for |bit_field3|.
-#define MAP_BIT_FIELD3_FIELDS(V, _)                               \
-  V(EnumLengthBits, int, kDescriptorIndexBitCount, _)             \
-  V(NumberOfOwnDescriptorsBits, int, kDescriptorIndexBitCount, _) \
-  V(IsPrototypeMapBit, bool, 1, _)                                \
-  V(IsDictionaryMapBit, bool, 1, _)                               \
-  V(OwnsDescriptorsBit, bool, 1, _)                               \
-  V(IsInRetainedMapListBit, bool, 1, _)                           \
-  V(IsDeprecatedBit, bool, 1, _)                                  \
-  V(IsUnstableBit, bool, 1, _)                                    \
-  V(IsMigrationTargetBit, bool, 1, _)                             \
-  V(IsExtensibleBit, bool, 1, _)                                  \
-  V(MayHaveInterestingSymbolsBit, bool, 1, _)                     \
-  V(ConstructionCounterBits, int, 3, _)
+  // Bit positions for |bit_field3|.
+  struct Bits3 {
+    DEFINE_TORQUE_GENERATED_MAP_BIT_FIELDS3()
+  };
 
-  DEFINE_BIT_FIELDS(MAP_BIT_FIELD3_FIELDS)
-#undef MAP_BIT_FIELD3_FIELDS
+  // Ensure that Torque-defined bit widths for |bit_field3| are as expected.
+  STATIC_ASSERT(Bits3::EnumLengthBits::kSize == kDescriptorIndexBitCount);
+  STATIC_ASSERT(Bits3::NumberOfOwnDescriptorsBits::kSize ==
+                kDescriptorIndexBitCount);
 
-  STATIC_ASSERT(NumberOfOwnDescriptorsBits::kMax >= kMaxNumberOfDescriptors);
+  STATIC_ASSERT(Bits3::NumberOfOwnDescriptorsBits::kMax >=
+                kMaxNumberOfDescriptors);
 
   static const int kSlackTrackingCounterStart = 7;
   static const int kSlackTrackingCounterEnd = 1;
   static const int kNoSlackTracking = 0;
-  STATIC_ASSERT(kSlackTrackingCounterStart <= ConstructionCounterBits::kMax);
+  STATIC_ASSERT(kSlackTrackingCounterStart <=
+                Bits3::ConstructionCounterBits::kMax);
 
   // Inobject slack tracking is the way to reclaim unused inobject space.
   //
@@ -429,9 +415,16 @@ class Map : public HeapObject {
   inline bool has_sealed_elements() const;
   inline bool has_frozen_elements() const;
 
-  // Returns true if the current map doesn't have DICTIONARY_ELEMENTS but if a
-  // map with DICTIONARY_ELEMENTS was found in the prototype chain.
-  bool DictionaryElementsInPrototypeChainOnly(Isolate* isolate);
+  // Weakly checks whether a map is detached from all transition trees. If this
+  // returns true, the map is guaranteed to be detached. If it returns false,
+  // there is no guarantee it is attached.
+  inline bool IsDetached(Isolate* isolate) const;
+
+  // Returns true if there is an object with potentially read-only elements
+  // in the prototype chain. It could be a Proxy, a string wrapper,
+  // an object with DICTIONARY_ELEMENTS potentially containing read-only
+  // elements or an object with any frozen elements, or a slow arguments object.
+  bool MayHaveReadOnlyElementsInPrototypeChain(Isolate* isolate);
 
   inline Map ElementsTransitionMap(Isolate* isolate);
 
@@ -581,11 +574,19 @@ class Map : public HeapObject {
   // back pointer chain until they find the map holding their constructor.
   // Returns null_value if there's neither a constructor function nor a
   // FunctionTemplateInfo available.
+  // The field also overlaps with the native context pointer for context maps,
+  // and with the Wasm type info for WebAssembly object maps.
   DECL_ACCESSORS(constructor_or_backpointer, Object)
+  DECL_ACCESSORS(native_context, NativeContext)
+  DECL_ACCESSORS(wasm_type_info, Foreign)
   DECL_GETTER(GetConstructor, Object)
   DECL_GETTER(GetFunctionTemplateInfo, FunctionTemplateInfo)
   inline void SetConstructor(Object constructor,
                              WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
+  // Constructor getter that performs at most the given number of steps
+  // in the transition tree. Returns either the constructor or the map at
+  // which the walk has stopped.
+  inline Object TryGetConstructor(Isolate* isolate, int max_steps);
   // [back pointer]: points back to the parent map from which a transition
   // leads to this map. The field overlaps with the constructor (see above).
   DECL_GETTER(GetBackPointer, HeapObject)
@@ -804,7 +805,7 @@ class Map : public HeapObject {
 
   inline bool CanTransition() const;
 
-  static Map GetStructMap(Isolate* isolate, InstanceType type);
+  static Map GetInstanceTypeMap(ReadOnlyRoots roots, InstanceType type);
 
 #define DECL_TESTER(Type, ...) inline bool Is##Type##Map() const;
   INSTANCE_TYPE_CHECKERS(DECL_TESTER)
@@ -860,7 +861,8 @@ class Map : public HeapObject {
 
   // Returns true if given field is unboxed double.
   inline bool IsUnboxedDoubleField(FieldIndex index) const;
-  inline bool IsUnboxedDoubleField(Isolate* isolate, FieldIndex index) const;
+  inline bool IsUnboxedDoubleField(const Isolate* isolate,
+                                   FieldIndex index) const;
 
   void PrintMapDetails(std::ostream& os);
 
@@ -980,7 +982,8 @@ class Map : public HeapObject {
   static const int kMaxFastProperties = 128;
 
   friend class MapUpdater;
-  friend class ConcurrentMarkingVisitor;
+  template <typename ConcreteVisitor, typename MarkingState>
+  friend class MarkingVisitorBase;
 
   OBJECT_CONSTRUCTORS(Map, HeapObject);
 };
@@ -1002,7 +1005,7 @@ class NormalizedMapCache : public WeakFixedArray {
   DECL_VERIFIER(NormalizedMapCache)
 
  private:
-  friend bool HeapObject::IsNormalizedMapCache(Isolate* isolate) const;
+  friend bool HeapObject::IsNormalizedMapCache(const Isolate* isolate) const;
 
   static const int kEntries = 64;
 
